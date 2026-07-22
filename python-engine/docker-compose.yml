@@ -1,0 +1,40 @@
+services:
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: quant_postgres
+    restart: always
+
+    environment:
+      POSTGRES_DB: quant_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  quant_engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: quant_ai_engine
+    restart: always
+
+    depends_on:
+      - postgres_db
+
+    environment:
+      POSTGRES_HOST: postgres_db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: quant_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+
+    env_file:
+      - .env
+
+volumes:
+  postgres_data:

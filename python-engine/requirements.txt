@@ -1,0 +1,8 @@
+psycopg2-binary
+schedule
+pandas
+numpy
+python-dotenv
+requests
+google-genai
+ccxt

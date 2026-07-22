@@ -1,0 +1,41 @@
+services:
+  - type: worker
+    name: quant-ai-engine
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+
+    envVars:
+      - key: POSTGRES_HOST
+        fromDatabase:
+          name: quant-postgres
+          property: host
+
+      - key: POSTGRES_PORT
+        fromDatabase:
+          name: quant-postgres
+          property: port
+
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: quant-postgres
+          property: database
+
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: quant-postgres
+          property: user
+
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: quant-postgres
+          property: password
+
+
+databases:
+  - name: quant-postgres
+    databaseName: quant_db
+    user: quant_user
+    plan: free
+    region: singapore

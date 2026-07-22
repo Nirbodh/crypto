@@ -1,0 +1,5 @@
+python-engine/.env
+python-engine/venv/
+python-engine/__pycache__/
+python-engine/*.db
+python-engine/test_*.py
