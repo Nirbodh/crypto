@@ -1,5 +1,65 @@
+# =========================
+# Environment Variables
+# =========================
+.env
 python-engine/.env
+
+
+# =========================
+# Python Virtual Environment
+# =========================
+venv/
 python-engine/venv/
-python-engine/__pycache__/
-python-engine/*.db
+
+
+# =========================
+# Python Cache
+# =========================
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+
+# =========================
+# Test Files
+# =========================
 python-engine/test_*.py
+
+
+# =========================
+# Local Database Files
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+python-engine/*.db
+
+
+# =========================
+# Docker PostgreSQL Data
+# =========================
+data/
+postgres_data/
+**/postgres/
+**/postgres_data/
+
+
+# =========================
+# Docker Volumes
+# =========================
+docker-volumes/
+
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
