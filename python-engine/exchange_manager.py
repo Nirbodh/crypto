@@ -41,6 +41,13 @@ class ExchangeManager:
             except Exception as e:
                 logging.warning(f"    ⚠️ Could not initialize exchange {ex_id}: {e}")
 
+    # 👇 NEW METHOD ADDED (Fixes the missing get_exchange error)
+    def get_exchange(self, exchange_id: str):
+        """
+        Returns the exchange instance for the given exchange ID.
+        """
+        return self.exchanges.get(exchange_id)
+
     def _is_banned(self, exchange_id: str) -> bool:
         """Check if an exchange is temporarily IP-banned."""
         if exchange_id in self.banned_exchanges:
