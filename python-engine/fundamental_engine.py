@@ -8,9 +8,9 @@ from typing import Dict, Any
 load_dotenv()
 
 class MultiSourceFundamentalEngine:
-    def __init__(self):
+    def __init__(self, coingecko_api_key: str = ""):
         self.cmc_api_key = os.getenv("COINMARKETCAP_API_KEY", "")
-        self.cg_api_key = os.getenv("COINGECKO_API_KEY", "")
+        self.cg_api_key = coingecko_api_key or os.getenv("COINGECKO_API_KEY", "")
         self.cc_api_key = os.getenv("COINCOMPARE_API_KEY", "")
         
         self.coingecko_base = "https://api.coingecko.com/api/v3"
@@ -29,8 +29,10 @@ class MultiSourceFundamentalEngine:
         cc_data = self._fetch_cryptocompare_data(base_symbol)
         cb_data = self._fetch_coinbase_data(base_symbol)
 
-        # Fallback priority logic for critical metrics
-        rank = cmc_data.get("rank") or cg_data.get("rank") or 999
+        # ✅ FIX: rank না পাওয়া গেলে None বা নিরাপদ ফলব্যাক রাখা যাতে কঠিন পেনাল্টি না হয়
+        raw_rank = cmc_data.get("rank") or cg_data.get("rank")
+        rank = raw_rank if raw_rank is not None else None
+
         mcap = cmc_data.get("mcap") or cg_data.get("mcap") or 0.0
         fdv = cg_data.get("fdv") or cmc_data.get("fdv") or mcap
         ath_change = cg_data.get("ath_change_pct", 0.0)
@@ -55,7 +57,7 @@ class MultiSourceFundamentalEngine:
                 "coinbase": cb_data.get("status") == "OK"
             },
             "metrics": {
-                "rank": rank,
+                "rank": rank if rank is not None else 999,
                 "market_cap_usd": mcap,
                 "fdv_usd": fdv,
                 "mcap_fdv_ratio": mcap_fdv_ratio,
@@ -96,9 +98,8 @@ class MultiSourceFundamentalEngine:
             if res.status_code == 200:
                 res_data = res.json().get("data", {})
                 if symbol in res_data:
-                    # Fix: CMC quotes endpoint returns a Dict for symbol, NOT a List
                     coin_info = res_data[symbol]
-                    if isinstance(coin_info, list):  # Just in case array is returned for duplicates
+                    if isinstance(coin_info, list):
                         coin_info = coin_info[0]
                         
                     quote = coin_info["quote"]["USD"]
@@ -132,7 +133,6 @@ class MultiSourceFundamentalEngine:
 
     def _fetch_coinbase_data(self, symbol: str) -> dict:
         try:
-            # Exchange API gives direct product pair check faster and cleanly
             url = f"{self.coinbase_base}/products/{symbol}-USD"
             res = requests.get(url, timeout=3)
             if res.status_code == 200:
@@ -141,39 +141,40 @@ class MultiSourceFundamentalEngine:
             pass
         return {"status": "FAILED", "is_listed": False}
 
-    def _calculate_multi_source_score(self, rank: int, mcap: float, fdv: float, ath_change: float, is_coinbase_listed: bool):
-        score = 50
+    def _calculate_multi_source_score(self, rank, mcap: float, fdv: float, ath_change: float, is_coinbase_listed: bool):
+        score = 50.0
         red_flags = []
         green_flags = []
 
-        # 1. Rank Score
-        if rank <= 20:
-            score += 25
-            green_flags.append(f"Top Tier Asset (Rank #{rank})")
-        elif rank <= 100:
-            score += 15
-            green_flags.append(f"Established Asset (Rank #{rank})")
-        elif rank > 300:
-            score -= 15
-            red_flags.append(f"Low Market Cap Rank (#{rank}) - Liquidity Risk")
+        # ✅ FIX: rank যদি None বা 999 হয়, তবে কঠোর পেনাল্টি না দিয়ে ডিফল্ট স্কোর ৫০ বহাল রাখা
+        if rank is not None and rank != 999:
+            if rank <= 20:
+                score += 25
+                green_flags.append(f"Top Tier Asset (Rank #{rank})")
+            elif rank <= 100:
+                score += 15
+                green_flags.append(f"Established Asset (Rank #{rank})")
+            elif rank > 300:
+                score -= 10  # পেনাল্টি ১৫ থেকে কমিয়ে ১০ করা হয়েছে
+                red_flags.append(f"Low Market Cap Rank (#{rank}) - Liquidity Risk")
+        else:
+            green_flags.append("Fundamental Rank Data Not Available (No Penalty)")
 
-        # 2. Tokenomics (MCAP vs FDV Unlocking Risk)
+        # ✅ FIX: ZeroDivisionError হ্যান্ডেল করে Dilution Risk ক্যালকুলেশন
         if fdv > 0 and mcap > 0:
             mcap_fdv_ratio = mcap / fdv
             if mcap_fdv_ratio < 0.3:
-                score -= 20
-                red_flags.append(f"High Dilution Risk (Only {mcap_fdv_ratio*100:.1f}% Unlocked)")
+                score -= 15
+                red_flags.append(f"High Dilution Risk ({mcap_fdv_ratio*100:.1f}% Unlocked)")
             elif mcap_fdv_ratio >= 0.75:
                 score += 10
                 green_flags.append("High Circulating Supply Unlocked (>75%)")
 
-        # 3. Exchange Quality Check
         if is_coinbase_listed:
             score += 10
             green_flags.append("Coinbase Tier-1 Listing Verified")
 
-        # 4. ATH Drawdown Check
-        if ath_change < -90.0:
+        if ath_change < -90.0 and ath_change != 0:
             score -= 10
             red_flags.append(f"Heavy Drawdown from ATH ({ath_change:.1f}%)")
 

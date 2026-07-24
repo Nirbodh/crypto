@@ -5,7 +5,7 @@ import schedule
 from datetime import datetime
 from main_engine import run_quant_pipeline
 
-SCAN_INTERVAL_MINUTES = 5  # Runs every 5 minutes for crypto 5m candles
+SCAN_INTERVAL_MINUTES = 10  # Changed to 10 minutes interval
 
 
 def scheduled_job():
@@ -21,12 +21,11 @@ def start_scheduler():
     print("🤖 QUANT CRYPTO AI - AUTONOMOUS 24/7 SCHEDULER STARTED")
     print(f"⏱️ Scan Frequency: Every {SCAN_INTERVAL_MINUTES} Minutes", flush=True)
     print("=" * 65, flush=True)
-    
 
     # Initial Run
     scheduled_job()
 
-    # Schedule recurring job
+    # Schedule recurring job every 10 minutes
     schedule.every(SCAN_INTERVAL_MINUTES).minutes.do(scheduled_job)
 
     while True:

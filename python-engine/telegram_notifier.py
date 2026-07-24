@@ -1,234 +1,140 @@
 # python-engine/telegram_notifier.py
 
 import os
-import re
+import logging
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 class TelegramNotifier:
+    def __init__(self, bot_token: str = None, chat_id: str = None):
+        """
+        Initializes Telegram Notifier.
+        Fallback to .env variables if explicit parameters are not provided.
+        """
+        raw_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
+        raw_chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
 
-    def __init__(self):
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-
-    def send_trade_alert(self, payload: dict, ai_verdict: dict):
+        self.bot_token = raw_token.strip() if raw_token else None
+        self.chat_id = raw_chat_id.strip() if raw_chat_id else None
 
         if not self.bot_token or not self.chat_id:
-            print("⚠️ Telegram credentials missing in .env!")
-            return
+            logging.warning("⚠️ Telegram Credentials missing in .env or arguments. Telegram alerts will be skipped.")
 
+    def send_message(self, text: str) -> bool:
+        """
+        Generic method to send raw HTML/text messages to Telegram.
+        """
+        if not self.bot_token or not self.chat_id:
+            logging.warning("⚠️ Telegram Credentials missing. Skipping message transmission.")
+            return False
 
-        symbol = payload.get("symbol", "N/A")
-
-        unified_score = (
-            payload.get("score", 0)
-            or payload.get("unified_score", 0)
-        )
-
-
-        # ==============================
-        # Scores
-        # ==============================
-
-        tech = payload.get("technical_score", 0)
-
-        if not tech:
-            tech = payload.get("technical", {}).get(
-                "technical_score",
-                0
-            )
-
-        deriv = payload.get("derivatives", {}).get(
-            "derivatives_score",
-            0
-        )
-
-        fund = payload.get("fundamental", {}).get(
-            "fundamental_score",
-            0
-        )
-
-        sent = payload.get("sentiment", {}).get(
-            "sentiment_score",
-            0
-        )
-
-
-        # ==============================
-        # Risk Management FIX
-        # ==============================
-
-        risk = payload.get(
-            "risk_management",
-            {}
-        )
-
-        trade_levels = risk.get(
-            "trade_levels",
-            {}
-        )
-
-
-        entry = (
-            risk.get("entry_price")
-            or trade_levels.get("entry_price")
-            or trade_levels.get("entry")
-            or payload.get("price")
-            or 0.0
-        )
-
-
-        sl = (
-            risk.get("stop_loss")
-            or trade_levels.get("stop_loss_price")
-            or trade_levels.get("stop_loss")
-            or 0.0
-        )
-
-
-        tp = (
-            risk.get("take_profit_1")
-            or trade_levels.get("take_profit_price")
-            or trade_levels.get("take_profit")
-            or 0.0
-        )
-
-
-        # ==============================
-        # AI Response Parser
-        # ==============================
-
-        analysis_text = ai_verdict.get(
-            "analysis",
-            ""
-        )
-
-
-        decision = "HOLD"
-        confidence = 0
-        summary = "Analysis complete."
-
-
-        if "EXECUTE_LONG" in analysis_text:
-            decision = "LONG"
-
-        elif "WAIT_FOR_DIP" in analysis_text:
-            decision = "HOLD"
-
-        elif "REJECT" in analysis_text:
-            decision = "HOLD"
-
-
-
-        conf_match = re.search(
-            r"Confidence Score.*?(\d+)",
-            analysis_text,
-            re.IGNORECASE | re.DOTALL
-        )
-
-        if conf_match:
-            confidence = int(
-                conf_match.group(1)
-            )
-
-
-
-        reason_match = re.search(
-            r"Arbitration Reason:\s*(.*?)(?:\n---|$)",
-            analysis_text,
-            re.DOTALL | re.IGNORECASE
-        )
-
-
-        if reason_match:
-            summary = reason_match.group(1).strip()
-
-        else:
-            summary = analysis_text[-200:].strip()
-
-
-
-        # ==============================
-        # Telegram Message
-        # ==============================
-
-        emoji_map = {
-            "LONG": "🟢 LONG",
-            "SHORT": "🔴 SHORT",
-            "HOLD": "🟡 HOLD"
-        }
-
-
-        decision_str = emoji_map.get(
-            decision,
-            "🟡 HOLD"
-        )
-
-
-        message = (
-            f"🚀 *QUANT CRYPTO AI - TRADE ALERT* 🚀\n\n"
-            f"📌 *Pair:* {symbol}\n"
-            f"🎯 *Unified Score:* {unified_score:.2f}/100\n"
-            f"🤖 *AI Decision:* {decision_str} "
-            f"(Confidence: {confidence}%)\n\n"
-
-            f"📊 *Scores Breakdown:*\n"
-            f" • Technical: {tech:.1f}/100\n"
-            f" • Derivatives: {deriv:.1f}/100\n"
-            f" • Fundamental: {fund:.1f}/100\n"
-            f" • Sentiment: {sent:.1f}/100\n\n"
-
-            f"💡 *Execution Plan:*\n"
-            f" • Entry: {entry:.4f}\n"
-            f" • Stop Loss: {sl:.4f}\n"
-            f" • Take Profit: {tp:.4f}\n\n"
-
-            f"📝 *AI Summary:* {summary}"
-        )
-
-
-        # ==============================
-        # Send Telegram
-        # ==============================
-
-        url = (
-            f"https://api.telegram.org/"
-            f"bot{self.bot_token}/sendMessage"
-        )
-
-
-        data = {
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        payload = {
             "chat_id": self.chat_id,
-            "text": message,
-            "parse_mode": "Markdown"
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
         }
-
 
         try:
-
-            res = requests.post(
-                url,
-                json=data,
-                timeout=10
-            )
-
-            if res.status_code == 200:
-                print(
-                    f"✅ Telegram Alert Delivered for {symbol}"
-                )
-
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                logging.info("📲 Telegram Message successfully sent!")
+                return True
             else:
-                print(
-                    f"❌ Telegram API Error: {res.text}"
-                )
-
-
+                logging.error(f"❌ Telegram API Error: {response.status_code} - {response.text}")
+                return False
         except Exception as e:
+            logging.error(f"❌ Telegram Notification Exception: {e}")
+            return False
 
-            print(
-                f"❌ Failed to send Telegram alert: {e}"
-            )
+    def send_institutional_signal(self, signal_data: dict) -> bool:
+        """
+        Legacy/Detailed institutional signal formatter.
+        """
+        symbol = signal_data.get("symbol", "UNKNOWN")
+        bias = signal_data.get("bias", "NEUTRAL")
+        score = signal_data.get("score", 0.0)
+        ev_r = signal_data.get("ev_r", 0.0)
+        entry = signal_data.get("entry", 0.0)
+        sl = signal_data.get("sl", 0.0)
+        tp = signal_data.get("tp", 0.0)
+        reasons = signal_data.get("reasons", [])
+
+        reasons_formatted = "\n".join([f"• {r}" for r in reasons]) if reasons else "• High probability setup verified."
+
+        message = f"""🚀 <b>INSTITUTIONAL QUANT SIGNAL</b> 🚀
+----------------------------------
+📌 <b>Symbol:</b> {symbol}
+🎯 <b>Bias / Action:</b> {bias}
+🔥 <b>Unified Score:</b> {score:.1f}/100 | <b>EV:</b> {ev_r}R
+
+📐 <b>EXECUTION LEVELS:</b>
+• <b>Entry:</b> ${entry}
+• <b>Stop Loss:</b> ${sl}
+• <b>Take Profit:</b> ${tp}
+
+🤖 <b>KEY CATALYSTS & REASONING:</b>
+{reasons_formatted}
+
+----------------------------------
+⚡ <i>Automated Quant AI Pipeline</i>
+"""
+        return self.send_message(message)
+
+    def send_trade_signal(
+        self,
+        symbol: str,
+        decision: str,
+        confidence: int,
+        score: float,
+        ev_r: float,
+        entry: float,
+        sl: float,
+        tp: float,
+        summary: str
+    ) -> bool:
+        """
+        Adapter method specifically matching the parameters called in main_engine.py
+        """
+        signal_data = {
+            "symbol": symbol,
+            "bias": f"{decision} (Confidence: {confidence}%)",
+            "score": score,
+            "ev_r": ev_r,
+            "entry": entry,
+            "sl": sl,
+            "tp": tp,
+            "reasons": [summary]
+        }
+
+        return self.send_institutional_signal(signal_data)
+
+
+if __name__ == "__main__":
+    print("==================================================")
+    print("📡 TESTING TELEGRAM NOTIFIER ADAPTER...")
+    print("==================================================")
+
+    notifier = TelegramNotifier()
+
+    # Direct Test Call matching main_engine signature
+    success = notifier.send_trade_signal(
+        symbol="BTC/USDT",
+        decision="EXECUTE_LONG",
+        confidence=85,
+        score=84.5,
+        ev_r=2.5,
+        entry=64825.50,
+        sl=63500.00,
+        tp=67500.00,
+        summary="Confluence of 4H Order Block Sweep and Bullish FVG."
+    )
+
+    if not success:
+        print("\n💡 NOTE: To test actual Telegram message delivery, set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in your .env file.")

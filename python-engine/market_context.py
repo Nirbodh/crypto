@@ -1,6 +1,23 @@
 # python-engine/market_context.py
 import requests
 import ccxt
+from smc_engine import SMCEngine
+
+
+def clean_json(obj):
+    """
+    NumPy / Pandas টাইপ বা কাস্টম অবজেক্টকে স্ট্যান্ডার্ড পাইথন টাইপে
+    রূপান্তর করে যাতে JSON serialization এ কোনো সমস্যা না হয়।
+    """
+    if isinstance(obj, dict):
+        return {k: clean_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [clean_json(x) for x in obj]
+    elif hasattr(obj, "item"):
+        return obj.item()
+    else:
+        return obj
+
 
 class MarketContext:
     
@@ -68,17 +85,20 @@ class MarketContext:
         return 50.0
 
     @classmethod
-    def build_full_market_context(cls, btc_1h_df=None):
+    def build_full_market_context(cls, btc_1h_df=None, symbol="BTC/USDT"):
         """পুরো মার্কেটের স্ন্যাপশট তৈরি করে যা AI ও Risk Engine ব্যবহার করবে।"""
         fng = cls.get_fear_and_greed_index()
-        derivatives = cls.get_derivatives_metrics("BTC/USDT")
+        derivatives = cls.get_derivatives_metrics(symbol)
         btc_dom = cls.get_btc_dominance()
         
-        # বিটিসি ক্যান্ডেল দিয়ে সিম্পল ম্যাক্রো ট্রেন্ড বের করা
+        # SMC Engine Instance
+        smc_engine = SMCEngine()
+        smc_analysis = smc_engine.calculate_smc_score(btc_1h_df, symbol=symbol)
+        
+        # বিটিসি ক্যান্ডেল দিয়ে সিম্পল ম্যাক্রো ট্রেন্ড বের করা
         btc_trend = "NEUTRAL"
         if btc_1h_df is not None and not btc_1h_df.empty:
             last = btc_1h_df.iloc[-1]
-            # আপনার indicators.py অনুযায়ী সঠিক কলামের নাম ব্যবহার করা হয়েছে (EMA_50, RSI)
             if 'EMA_50' in last and 'RSI' in last:
                 if last['close'] > last['EMA_50'] and last['RSI'] > 50:
                     btc_trend = "BULLISH"
@@ -86,12 +106,15 @@ class MarketContext:
                     btc_trend = "BEARISH"
 
         context_json = {
+            "symbol": symbol,
             "btc_macro_trend": btc_trend,
             "btc_dominance": f"{btc_dom}%",
             "fear_and_greed": f"{fng['value']} ({fng['sentiment']})",
             "funding_rate": f"{derivatives['funding_rate']}%",
             "funding_sentiment": derivatives["funding_sentiment"],
+            "smc_liquidity_score": smc_analysis["smc_liquidity_score"],
+            "smc_details": smc_analysis["details"],
             "news_sentiment": "NEUTRAL"
         }
         
-        return context_json
+        return clean_json(context_json)
