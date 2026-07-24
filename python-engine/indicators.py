@@ -2,7 +2,7 @@
 
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
+import ta
 from typing import Dict, Optional, List, Tuple
 
 # ------------------------------------------------------------
