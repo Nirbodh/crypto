@@ -3,17 +3,21 @@
 import time
 import schedule
 from datetime import datetime
-from main_engine import run_quant_pipeline
+from main_engine import QuantTradingOrchestrator  # <-- ক্লাস ইমপোর্ট, ফাংশন না
 
-SCAN_INTERVAL_MINUTES = 10  # Changed to 10 minutes interval
+SCAN_INTERVAL_MINUTES = 10
 
 
 def scheduled_job():
     print(f"\n⏰ [SCHEDULER] Triggering Quant Pipeline Job at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     try:
-        run_quant_pipeline()
+        # 🔥 সরাসরি অর্কেস্ট্রেটর তৈরি করে স্ক্যান চালানো
+        orchestrator = QuantTradingOrchestrator()
+        orchestrator.scan_and_execute(max_universe_size=300)
     except Exception as e:
         print(f"❌ [SCHEDULER ERROR] Pipeline execution failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def start_scheduler():
