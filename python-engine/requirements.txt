@@ -1,6 +1,7 @@
 psycopg2-binary
 schedule
 pandas
+pandas-ta
 numpy
 python-dotenv
 requests
