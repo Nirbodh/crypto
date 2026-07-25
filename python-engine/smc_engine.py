@@ -1,3 +1,5 @@
+# python-engine/smc_engine.py
+
 import pandas as pd
 import numpy as np
 import logging
@@ -13,31 +15,108 @@ class SMCEngine:
         """
         self.fvg_threshold_pct = fvg_threshold_pct
 
+    def _detect_swings(self, df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
+        """
+        সুইং হাই এবং সুইং লো চিহ্নিত করে (SMC-র ভিত্তি)।
+        """
+        df_copy = df.copy()
+        # রোলিং উইন্ডোতে সেন্টার করে ম্যাক্স/মিন খুঁজি
+        df_copy['swing_high'] = df_copy['high'].where(
+            df_copy['high'] == df_copy['high'].rolling(window * 2 + 1, center=True, min_periods=1).max()
+        )
+        df_copy['swing_low'] = df_copy['low'].where(
+            df_copy['low'] == df_copy['low'].rolling(window * 2 + 1, center=True, min_periods=1).min()
+        )
+        return df_copy
+
     def detect_fair_value_gaps(self, df: pd.DataFrame) -> dict:
         """
-        Bullish এবং Bearish Fair Value Gaps (FVG) চিহ্নিত করে।
+        সম্পূর্ণ ডেটাফ্রেম স্ক্যান করে সব Fair Value Gaps (FVG) চিহ্নিত করে।
+        সর্বশেষ ৫টি FVG রিটার্ন করে।
         """
         if df is None or len(df) < 3:
-            return {"bullish_fvg": False, "bearish_fvg": False, "gap_size": 0.0}
+            return {"bullish_fvg": False, "bearish_fvg": False, "fvgs_list": [], "gap_size": 0.0}
 
-        latest_idx = df.index[-1]
-        prev2_idx = df.index[-3]
+        fvgs = []
+        high = df['high'].values
+        low = df['low'].values
+        close = df['close'].values
 
-        # Bullish FVG: Candle 1 High < Candle 3 Low
-        bullish_gap = df.loc[latest_idx, 'low'] - df.loc[prev2_idx, 'high']
-        is_bullish_fvg = bullish_gap > (df.loc[latest_idx, 'close'] * self.fvg_threshold_pct)
+        for i in range(2, len(df)):
+            # Bullish FVG: বর্তমান ক্যান্ডেলের Low > দুই ক্যান্ডেল আগের High
+            if low[i] > high[i - 2]:
+                gap_size = low[i] - high[i - 2]
+                if gap_size > (close[i] * self.fvg_threshold_pct):
+                    fvgs.append({
+                        "type": "BULLISH",
+                        "top": round(float(low[i]), 4),
+                        "bottom": round(float(high[i - 2]), 4),
+                        "index": i,
+                        "gap_size": round(float(gap_size), 4)
+                    })
+            # Bearish FVG: বর্তমান ক্যান্ডেলের High < দুই ক্যান্ডেল আগের Low
+            elif high[i] < low[i - 2]:
+                gap_size = low[i - 2] - high[i]
+                if gap_size > (close[i] * self.fvg_threshold_pct):
+                    fvgs.append({
+                        "type": "BEARISH",
+                        "top": round(float(low[i - 2]), 4),
+                        "bottom": round(float(high[i]), 4),
+                        "index": i,
+                        "gap_size": round(float(gap_size), 4)
+                    })
 
-        # Bearish FVG: Candle 1 Low > Candle 3 High
-        bearish_gap = df.loc[prev2_idx, 'low'] - df.loc[latest_idx, 'high']
-        is_bearish_fvg = bearish_gap > (df.loc[latest_idx, 'close'] * self.fvg_threshold_pct)
+        # সর্বশেষ ৫টি FVG ধরে রাখি (পারফরম্যান্সের জন্য)
+        latest_fvgs = fvgs[-5:] if fvgs else []
+        bullish_present = any(f['type'] == 'BULLISH' for f in latest_fvgs)
+        bearish_present = any(f['type'] == 'BEARISH' for f in latest_fvgs)
+        max_gap = max([f['gap_size'] for f in latest_fvgs]) if latest_fvgs else 0.0
 
         return {
-            "bullish_fvg": bool(is_bullish_fvg),
-            "bearish_fvg": bool(is_bearish_fvg),
-            "gap_size": round(float(max(bullish_gap, bearish_gap, 0)), 4)
+            "bullish_fvg": bool(bullish_present),
+            "bearish_fvg": bool(bearish_present),
+            "fvgs_list": latest_fvgs,
+            "gap_size": round(float(max_gap), 4)
         }
 
-    def detect_liquidity_sweeps(self, df: pd.DataFrame, lookback=20) -> dict:
+    def detect_choch(self, df: pd.DataFrame) -> dict:
+        """
+        সুইং হাই/লো ব্যবহার করে Change of Character (CHoCH) চিহ্নিত করে।
+        """
+        if df is None or len(df) < 20:
+            return {"confirmed": False, "direction": "NEUTRAL", "prev_swing_high": 0.0, "prev_swing_low": 0.0}
+
+        # সুইং পয়েন্টগুলো বের করি
+        swing_highs = df[df['swing_high'].notna()]
+        swing_lows = df[df['swing_low'].notna()]
+
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return {"confirmed": False, "direction": "NEUTRAL", "prev_swing_high": 0.0, "prev_swing_low": 0.0}
+
+        last_high = swing_highs.iloc[-1]['high']
+        prev_high = swing_highs.iloc[-2]['high']
+        last_low = swing_lows.iloc[-1]['low']
+        prev_low = swing_lows.iloc[-2]['low']
+        current_close = df.iloc[-1]['close']
+
+        bullish_choch = False
+        bearish_choch = False
+
+        # বুলিশ CHoCH: প্রাইস পূর্ববর্তী উচ্চ সুইং ভেঙে উপরে গেছে (ডাউনট্রেন্ড ব্রেক)
+        if current_close > prev_high and last_low >= prev_low:
+            bullish_choch = True
+        # বিয়ারিশ CHoCH: প্রাইস পূর্ববর্তী নিম্ন সুইং ভেঙে নিচে গেছে (আপট্রেন্ড ব্রেক)
+        elif current_close < prev_low and last_high <= prev_high:
+            bearish_choch = True
+
+        return {
+            "confirmed": bool(bullish_choch or bearish_choch),
+            "direction": "BULLISH" if bullish_choch else "BEARISH" if bearish_choch else "NEUTRAL",
+            "prev_swing_high": round(float(prev_high), 4),
+            "prev_swing_low": round(float(prev_low), 4)
+        }
+
+    def detect_liquidity_sweeps(self, df: pd.DataFrame, lookback: int = 20) -> dict:
         """
         Previous Day High (PDH) / Low (PDL) বা Swing High/Low Liquidity Sweep চিহ্নিত করে।
         """
@@ -50,10 +129,9 @@ class SMCEngine:
         highest_high = past_candles['high'].max()
         lowest_low = past_candles['low'].min()
 
-        # Bullish Sweep (Sell-side liquidity sweep): Low wicks below lowest low, but closes above it
+        # Bullish Sweep: লো উইক নিচে গিয়ে ক্লোজ উপরে
         bullish_sweep = (current_candle['low'] < lowest_low) and (current_candle['close'] > lowest_low)
-
-        # Bearish Sweep (Buy-side liquidity sweep): High wicks above highest high, but closes below it
+        # Bearish Sweep: হাই উইক উপরে গিয়ে ক্লোজ নিচে
         bearish_sweep = (current_candle['high'] > highest_high) and (current_candle['close'] < highest_high)
 
         return {
@@ -63,40 +141,44 @@ class SMCEngine:
             "key_low_swept": round(float(lowest_low), 4)
         }
 
-    def detect_order_blocks(self, df: pd.DataFrame, lookback=10) -> dict:
+    def detect_order_blocks(self, df: pd.DataFrame, lookback: int = 10) -> dict:
         """
-        Order Block (Bullish / Bearish OB) রেঞ্জ চিহ্নিত করে।
+        Order Block (Bullish / Bearish OB) রেঞ্জ চিহ্নিত করে এবং OB প্রাইস রিটার্ন করে।
         """
         if df is None or len(df) < lookback:
-            return {"bullish_ob": False, "bearish_ob": False}
+            return {"bullish_ob": False, "bearish_ob": False, "order_block_price": 0.0}
 
         recent = df.iloc[-lookback:]
         current_close = df.iloc[-1]['close']
+        order_block_price = 0.0
         
-        # Bullish OB: Strong upward expansion after a down candle
+        # Bullish OB: ডাউন ক্যান্ডেলের পর শক্তিশালী আপ মুভ
         down_candles = recent[recent['close'] < recent['open']]
         bullish_ob = False
         if not down_candles.empty:
             last_down_candle = down_candles.iloc[-1]
+            order_block_price = float(last_down_candle['low'])  # OB সাপোর্ট
             if current_close > last_down_candle['high'] and df.iloc[-1]['volume'] > df['volume'].tail(20).mean():
                 bullish_ob = True
 
-        # Bearish OB: Strong downward expansion after an up candle
+        # Bearish OB: আপ ক্যান্ডেলের পর শক্তিশালী ডাউন মুভ
         up_candles = recent[recent['close'] > recent['open']]
         bearish_ob = False
         if not up_candles.empty:
             last_up_candle = up_candles.iloc[-1]
+            order_block_price = float(last_up_candle['high'])  # OB রেজিস্ট্যান্স
             if current_close < last_up_candle['low'] and df.iloc[-1]['volume'] > df['volume'].tail(20).mean():
                 bearish_ob = True
 
         return {
             "bullish_ob": bool(bullish_ob),
-            "bearish_ob": bool(bearish_ob)
+            "bearish_ob": bool(bearish_ob),
+            "order_block_price": order_block_price
         }
 
-    def calculate_premium_discount_zone(self, df: pd.DataFrame, lookback=50) -> dict:
+    def calculate_premium_discount_zone(self, df: pd.DataFrame, lookback: int = 50) -> dict:
         """
-        Calculates Macro Range Equilibrium (50%), Premium Zone (>50%), and Discount Zone (<50%).
+        ম্যাক্রো রেঞ্জের ইকুইলিব্রিয়াম (৫০%), প্রিমিয়াম জোন (>৫০%), ডিসকাউন্ট জোন (<৫০%) ক্যালকুলেট করে।
         """
         if df is None or len(df) < lookback:
             return {"zone": "UNKNOWN", "is_discount": False, "equilibrium": 0.0}
@@ -125,6 +207,7 @@ class SMCEngine:
     def calculate_smc_score(self, df: pd.DataFrame, symbol: str = "BTC/USDT") -> dict:
         """
         SMC & Liquidity Score (0-100) হিসাব করে score_fusion_engine-এর জন্য প্রস্তুত করে।
+        এখানে CHoCH (সুইং-ভিত্তিক), FVG (সম্পূর্ণ স্ক্যান), OB মিটিগেশন সব সঠিকভাবে যুক্ত।
         """
         if df is None or df.empty or len(df) < 20:
             return {
@@ -137,69 +220,101 @@ class SMCEngine:
                 "market_structure": "NEUTRAL",
                 "green_flags": [],
                 "red_flags": ["INSUFFICIENT_SMC_DATA"],
-                "fvgs": []  # ফাঁকা লিস্ট
+                "fvgs": []
             }
 
+        # ১. সুইং ডিটেক্ট করে CHoCH বের করি
+        df_with_swings = self._detect_swings(df)
+        choch_res = self.detect_choch(df_with_swings)
+
+        # ২. FVG (পুরো ডেটাফ্রেম স্ক্যান)
         fvg_res = self.detect_fair_value_gaps(df)
+
+        # ৩. লিকুইডিটি সুইপ
         sweep_res = self.detect_liquidity_sweeps(df)
+
+        # ৪. অর্ডার ব্লক
         ob_res = self.detect_order_blocks(df)
+
+        # ৫. প্রিমিয়াম/ডিসকাউন্ট জোন
         zone_res = self.calculate_premium_discount_zone(df)
 
         base_score = 50.0
         green_flags = []
         red_flags = []
 
-        # Discount vs Premium Zone Impact
+        # --- CHoCH ইমপ্যাক্ট (সবচেয়ে গুরুত্বপূর্ণ) ---
+        if choch_res["confirmed"]:
+            if choch_res["direction"] == "BULLISH":
+                base_score += 25.0
+                green_flags.append("CHoCH_BULLISH_CONFIRMED")
+            elif choch_res["direction"] == "BEARISH":
+                base_score -= 25.0
+                red_flags.append("CHoCH_BEARISH_CONFIRMED")
+
+        # --- লিকুইডিটি সুইপ ---
+        if sweep_res["bullish_sweep"]:
+            base_score += 15.0
+            green_flags.append("LIQUIDITY_SWEEP_BULLISH")
+        if sweep_res["bearish_sweep"]:
+            base_score -= 15.0
+            red_flags.append("LIQUIDITY_SWEEP_BEARISH")
+
+        # --- FVG ---
+        if fvg_res["bullish_fvg"]:
+            base_score += 10.0
+            green_flags.append("BULLISH_FVG_SUPPORT")
+        if fvg_res["bearish_fvg"]:
+            base_score -= 10.0
+            red_flags.append("BEARISH_FVG_RESISTANCE")
+
+        # --- অর্ডার ব্লক ---
+        if ob_res["bullish_ob"]:
+            base_score += 10.0
+            green_flags.append("BULLISH_ORDER_BLOCK")
+        if ob_res["bearish_ob"]:
+            base_score -= 10.0
+            red_flags.append("BEARISH_ORDER_BLOCK")
+
+        # --- জোন (ডিসকাউন্ট/প্রিমিয়াম) ---
         if zone_res["is_discount"]:
             base_score += 10.0
             green_flags.append("PRICE_IN_DISCOUNT_ZONE")
         else:
             base_score -= 10.0
-            red_flags.append("PRICE_IN_PREMIUM_ZONE_NO_LONG")
+            red_flags.append("PRICE_IN_PREMIUM_ZONE")
 
-        # Bullish Boosters
-        if sweep_res["bullish_sweep"]:
-            base_score += 20.0
-            green_flags.append("LIQUIDITY_SWEEP_BULLISH")
-        if fvg_res["bullish_fvg"]:
-            base_score += 15.0
-            green_flags.append("BULLISH_FVG_SUPPORT")
-        if ob_res["bullish_ob"]:
-            base_score += 10.0
-            green_flags.append("BULLISH_ORDER_BLOCK")
+        # --- OB মিটিগেশন চেক (CHoCH + OB রিট্রেসমেন্ট) ---
+        current_close = float(df['close'].iloc[-1])
+        ob_price = ob_res.get("order_block_price", 0.0)
+        ob_mitigated = False
 
-        # Bearish Factors
-        if sweep_res["bearish_sweep"]:
-            base_score -= 20.0
-            red_flags.append("LIQUIDITY_SWEEP_BEARISH")
-        if fvg_res["bearish_fvg"]:
-            base_score -= 15.0
-            red_flags.append("BEARISH_FVG_RESISTANCE")
-        if ob_res["bearish_ob"]:
-            base_score -= 10.0
-            red_flags.append("BEARISH_ORDER_BLOCK")
+        if choch_res["confirmed"] and ob_price > 0:
+            # ১.৫% ব্যান্ডের মধ্যে প্রাইস OB জোনে ফিরে এসেছে কিনা
+            if choch_res["direction"] == "BULLISH" and (ob_price * 0.985) <= current_close <= (ob_price * 1.015):
+                ob_mitigated = True
+                base_score += 15.0
+                green_flags.append("OB_MITIGATED_BULLISH_RETRACEMENT")
+            elif choch_res["direction"] == "BEARISH" and (ob_price * 0.985) <= current_close <= (ob_price * 1.015):
+                ob_mitigated = True
+                base_score -= 15.0
+                red_flags.append("OB_MITIGATED_BEARISH_RETRACEMENT")
 
         final_score = round(max(0.0, min(100.0, base_score)), 2)
 
-        # FVG লিস্ট তৈরি করা (শুধু মক ডেটা, বাস্তবে ডিটেইলস যোগ করা যেতে পারে)
-        fvgs = []
-        if fvg_res["bullish_fvg"] or fvg_res["bearish_fvg"]:
-            # ডামি FVG লিস্ট, প্রয়োজনমতো আরও বিস্তারিত যোগ করা যায়
-            fvgs.append({
-                "type": "BULLISH" if fvg_res["bullish_fvg"] else "BEARISH",
-                "top": float(df['high'].iloc[-1]),
-                "bottom": float(df['low'].iloc[-1])
-            })
+        # --- FVG লিস্ট (ডিটেইল সহ) ---
+        fvgs = fvg_res.get("fvgs_list", [])
 
         return {
             "symbol": symbol,
             "smc_score": final_score,
             "smc_liquidity_score": final_score,
-            "choch_confirmed": sweep_res["bullish_sweep"] or sweep_res["bearish_sweep"],
-            "fvg_present": fvg_res["bullish_fvg"] or fvg_res["bearish_fvg"],
-            "ob_mitigated": ob_res["bullish_ob"] or ob_res["bearish_ob"],
-            "market_structure": "BULLISH" if final_score > 60 else "BEARISH" if final_score < 40 else "NEUTRAL",
+            "choch_confirmed": bool(choch_res["confirmed"]),
+            "fvg_present": bool(fvg_res["bullish_fvg"] or fvg_res["bearish_fvg"]),
+            "ob_mitigated": bool(ob_mitigated),
+            "market_structure": "BULLISH" if final_score > 55 else "BEARISH" if final_score < 45 else "NEUTRAL",
             "details": {
+                "choch": choch_res,
                 "fvg": fvg_res,
                 "sweeps": sweep_res,
                 "order_blocks": ob_res,
@@ -207,7 +322,7 @@ class SMCEngine:
             },
             "green_flags": green_flags,
             "red_flags": red_flags,
-            "fvgs": fvgs   # <-- নতুন কী, fvgs লিস্ট যোগ করা হয়েছে
+            "fvgs": fvgs  # বিস্তারিত FVG লিস্ট
         }
 
     def analyze(self, df: pd.DataFrame, symbol: str = "BTC/USDT") -> dict:
@@ -229,7 +344,6 @@ class SMCEngine:
             fvg_low = fvg.get('bottom', 0)
             fvg_high = fvg.get('top', 0)
             
-            # যদি বর্তমান ক্যান্ডেলের প্রাইস FVG জোনের ভেতরে প্রবেশ করে (Mitigation)
             if (current_low <= fvg_high) and (current_high >= fvg_low):
                 return True
                 
@@ -244,16 +358,22 @@ class SMCEngine:
 
 if __name__ == "__main__":
     print("==================================================")
-    print("🧠 TESTING SMART MONEY CONCEPTS (SMC) ENGINE...")
+    print("🧠 TESTING UPGRADED SMART MONEY CONCEPTS (SMC) ENGINE...")
     print("==================================================")
     
-    # Mock Data Generation for Testing
+    # টেস্টিং-এর জন্য এমন ডেটা বানানো হয়েছে যাতে FVG ও CHoCH ক্লিয়ারলি দেখা যায়
     dates = pd.date_range(end=pd.Timestamp.now(), periods=60, freq="15min")
-    np.random.seed(101)
+    np.random.seed(42)
     
-    close_prices = 64000.0 + np.cumsum(np.random.randn(60) * 100)
-    high_prices = close_prices + np.random.uniform(50, 300, 60)
-    low_prices = close_prices - np.random.uniform(50, 300, 60)
+    # ইচ্ছাকৃতভাবে FVG তৈরি করার জন্য প্রাইস স্পাইক যোগ করা হয়েছে
+    close_prices = 64000.0 + np.cumsum(np.random.randn(60) * 50)
+    # কৃত্রিম FVG তৈরি (Index 30-এ বড় গ্যাপ)
+    close_prices[30] = close_prices[28] + 400  # স্পাইক আপ
+    close_prices[31] = close_prices[30] - 100
+    close_prices[32] = close_prices[31] + 50
+    
+    high_prices = close_prices + np.random.uniform(20, 150, 60)
+    low_prices = close_prices - np.random.uniform(20, 150, 60)
     open_prices = low_prices + np.random.uniform(0.0, high_prices - low_prices)
     volumes = np.random.uniform(10, 100, 60)
 
@@ -265,9 +385,16 @@ if __name__ == "__main__":
         "volume": volumes
     }, index=dates)
 
-    smc = SMCEngine()
+    smc = SMCEngine(fvg_threshold_pct=0.001)  # ০.১% থ্রেশহোল্ড (টেস্টের জন্য)
     result = smc.calculate_smc_score(mock_df, symbol="BTC/USDT")
     
     print("✅ SMC Engine Executed Successfully!")
     print("\n📊 Generated Output Matrix:")
     print(json.dumps(result, indent=4))
+    
+    print("\n🔍 FVG List Details:")
+    if result.get("fvgs"):
+        for idx, fvg in enumerate(result["fvgs"]):
+            print(f"  FVG #{idx+1}: {fvg['type']} | Top: {fvg['top']} | Bottom: {fvg['bottom']} | Gap: {fvg['gap_size']}")
+    else:
+        print("  No FVG detected in this sample.")

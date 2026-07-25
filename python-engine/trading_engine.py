@@ -1,47 +1,48 @@
 import pandas as pd
 import numpy as np
-import pandas_ta as ta
+from ta.momentum import RSIIndicator
+from ta.trend import MACD, EMAIndicator, ADXIndicator
+from ta.volatility import AverageTrueRange
+from ta.volume import OnBalanceVolumeIndicator
 from typing import Dict, Optional, List, Tuple, Any
 
 # ============================================================
-# SECTION 1: CORE INDICATORS
+# SECTION 1: CORE INDICATORS (FULLY FIXED)
 # ============================================================
 class CoreIndicators:
     @staticmethod
     def calculate(df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
-        # RSI
-        df['RSI'] = ta.rsi(df['close'], length=14)
+        # 1. RSI (ঠিক আছে)
+        df['RSI'] = RSIIndicator(close=df['close'], window=14).rsi()
         
-        # MACD
-        macd_df = ta.macd(df['close'], fast=12, slow=26, signal=9)
-        if macd_df is not None and not macd_df.empty:
-            macd_col = [c for c in macd_df.columns if c.startswith("MACD_") and "MACDs" not in c and "MACDh" not in c]
-            signal_col = [c for c in macd_df.columns if c.startswith("MACDs_")]
-            df['MACD'] = macd_df[macd_col[0]] if macd_col else 0.0
-            df['MACD_Signal'] = macd_df[signal_col[0]] if signal_col else 0.0
-        else:
-            df['MACD'] = 0.0
-            df['MACD_Signal'] = 0.0
+        # 2. MACD (🔥 FIX: macd_df ভেরিয়েবল সরিয়ে সোজা অ্যাসাইন করা হলো)
+        macd = MACD(close=df['close'], window_fast=12, window_slow=26, window_sign=9)
+        df['MACD'] = macd.macd()
+        df['MACD_Signal'] = macd.macd_signal()
+        df['MACD_Hist'] = macd.macd_diff()   # (ঐচ্ছিক)
         
-        # EMAs
+        # 3. EMAs (🔥 FIX: pandas_ta.ema -> EMAIndicator)
         for period in [9, 20, 50, 100, 200]:
-            df[f'EMA_{period}'] = ta.ema(df['close'], length=period)
+            df[f'EMA_{period}'] = EMAIndicator(close=df['close'], window=period).ema_indicator()
         
-        # ATR
-        df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+        # 4. ATR (🔥 FIX: pandas_ta.atr -> AverageTrueRange)
+        df['ATR'] = AverageTrueRange(
+            high=df['high'], 
+            low=df['low'], 
+            close=df['close'], 
+            window=14
+        ).average_true_range()
         
-        # ADX
-        adx_df = ta.adx(df['high'], df['low'], df['close'], length=14)
-        if adx_df is not None and not adx_df.empty:
-            adx_col = [c for c in adx_df.columns if c.startswith("ADX_")]
-            df['ADX'] = adx_df[adx_col[0]] if adx_col else 20.0
-        else:
-            df['ADX'] = 20.0
+        # 5. ADX (🔥 FIX: pandas_ta.adx -> ADXIndicator)
+        adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+        df['ADX'] = adx_ind.adx()
         
-        # OBV
-        df['OBV'] = ta.obv(df['close'], df['volume'])
+        # 6. OBV (🔥 FIX: pandas_ta.obv -> OnBalanceVolumeIndicator)
+        obv_ind = OnBalanceVolumeIndicator(close=df['close'], volume=df['volume'])
+        df['OBV'] = obv_ind.on_balance_volume()
+        
         if df['OBV'] is not None:
             df['OBV_MA3'] = df['OBV'].rolling(3).mean()
             df['OBV_Rising'] = (df['OBV'] > df['OBV_MA3']).astype(int)

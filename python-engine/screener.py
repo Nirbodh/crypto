@@ -216,11 +216,11 @@ class TechnicalScreener:
                 adjusted_score -= 10.0
                 penalties.append(f"SMC Bearish Structure Penalty (-10) [Score: {smc_score}]")
 
-            # Check if chasing in Premium Zone
+            # Check if chasing in Premium Zone (Updated to -10 for Spot Scalping flexibility)
             is_discount = smc_data.get("details", {}).get("zone", {}).get("is_discount", True)
             if not is_discount:
-                adjusted_score -= 15.0
-                penalties.append("SMC Guardrail: Chasing in Premium Zone (-15)")
+                adjusted_score -= 10.0
+                penalties.append("SMC Guardrail: Chasing in Premium Zone (-10)")
 
             final_technical_score = max(0.0, min(100.0, adjusted_score))
 

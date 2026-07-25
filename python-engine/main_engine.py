@@ -23,7 +23,7 @@ from mtf_engine import MultiTimeframeEngine
 from ai_engine import AIDebateEngine
 from telegram_notifier import TelegramNotifier
 from database_engine import DatabaseEngine
-from indicators import TechnicalIndicators, SessionIndicators  # <-- পরিবর্তন এখানে
+from indicators import TechnicalIndicators, SessionIndicators
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -132,6 +132,27 @@ class QuantTradingOrchestrator:
             # ================================================================
             # 5. Unified Score Fusion Execution (with all new params)
             # ================================================================
+            
+            # ---- FIX: Properly handle red_flags from tech_res (dict) and fund_res (list) ----
+            tech_flags = tech_res.get("red_flags", {})
+            if isinstance(tech_flags, dict):
+                tech_flags = (
+                    tech_flags.get("critical", [])
+                    + tech_flags.get("major", [])
+                    + tech_flags.get("minor", [])
+                )
+            else:
+                # If it's already a list, use it; otherwise fallback to empty list
+                if not isinstance(tech_flags, list):
+                    tech_flags = []
+            
+            fund_flags = fund_res.get("red_flags", [])
+            if not isinstance(fund_flags, list):
+                fund_flags = []
+            
+            red_flags = tech_flags + fund_flags
+            # ----------------------------------------------------------------
+
             fusion_res = InstitutionalScoreFusionEngine.fuse_scores(
                 symbol=symbol,
                 tech_score=tech_res.get("technical_score", 50.0),
@@ -141,13 +162,13 @@ class QuantTradingOrchestrator:
                 derivatives_score=deriv_res.get("derivatives_score", 50.0),
                 fundamental_score=fund_res.get("fundamental_score", 50.0),
                 sentiment_score=sentiment_score,
-                session_score=session_score,                       # <-- নতুন
-                fvg_mitigation_score=fvg_mitigation_score,         # <-- নতুন
+                session_score=session_score,                               # Session score
+                fvg_mitigation_score=fvg_mitigation_score,                 # FVG mitigation score
                 estimated_win_rate=0.65,
                 rr_ratio=2.5,
                 btc_regime_bullish=btc_context["btc_regime_bullish"],
                 market_volatility_high=btc_context["market_volatility_high"],
-                red_flags=tech_res.get("red_flags", []) + fund_res.get("red_flags", [])
+                red_flags=red_flags
             )
 
             return {
@@ -170,12 +191,12 @@ class QuantTradingOrchestrator:
             }
 
         except Exception as e:
-            logging.error(f"⚠️ Error processing asset {symbol} in worker thread: {e}")
+            logging.exception(f"⚠️ Error processing asset {symbol} in worker thread")
             return {"symbol": symbol, "status": "ERROR", "message": str(e)}
 
-    def scan_and_execute(self, max_universe_size: int = 300):
+    def scan_and_execute(self, max_universe_size: int = 50):
         target_coins = self.universe_engine.build_tradable_universe(
-            min_volume_usdt=2_000_000, 
+            min_volume_usdt=2_000_000,
             min_exchanges=2
         )[:max_universe_size]
 
@@ -205,7 +226,7 @@ class QuantTradingOrchestrator:
         max_workers = min(10, len(target_coins)) if target_coins else 4
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_symbol = {
-                executor.submit(self._process_single_asset, symbol, btc_context): symbol 
+                executor.submit(self._process_single_asset, symbol, btc_context): symbol
                 for symbol in target_coins
             }
 
@@ -246,8 +267,8 @@ class QuantTradingOrchestrator:
                 ai_decision = ai_res.get('final_decision', 'HOLD')
 
                 if (
-                    fusion_res['unified_score'] >= (78.0 if market_volatility_high else 72.0) and 
-                    ai_confidence >= 70 and 
+                    fusion_res['unified_score'] >= (78.0 if market_volatility_high else 72.0) and
+                    ai_confidence >= 70 and
                     ai_decision in ["EXECUTE_LONG", "EXECUTE_SHORT"]
                 ):
                     logging.info(f"🚀 HIGH CONVICTION SIGNAL! Dispatching Alert for {symbol}...")
@@ -264,10 +285,14 @@ class QuantTradingOrchestrator:
                     )
                     self.db.save_trade_signal(payload=payload, ai_verdict=ai_res)
 
-            except Exception as e:
-                logging.error(f"⚠️ Exception during AI/Dispatch phase for {symbol}: {e}")
+            except Exception:
+                logging.exception(f"⚠️ Error processing asset {symbol} in worker thread")
+                return {
+                    "symbol": symbol,
+                    "status": "ERROR"
+                }
 
-    def run_forever(self, scan_limit: int = 300, poll_interval_seconds: int = 300):
+    def run_forever(self, scan_limit: int = 50, poll_interval_seconds: int = 300):
         while True:
             try:
                 self.scan_and_execute(max_universe_size=scan_limit)
@@ -279,4 +304,4 @@ class QuantTradingOrchestrator:
 
 if __name__ == "__main__":
     orchestrator = QuantTradingOrchestrator()
-    orchestrator.run_forever(scan_limit=300, poll_interval_seconds=300)
+    orchestrator.run_forever(scan_limit=50, poll_interval_seconds=300)

@@ -17,6 +17,11 @@ class ExchangeManager:
         "kucoin", "binance", "coinbase", "kraken", "htx"
     ]
 
+    # Exchanges that support perpetual futures (USDT-margined)
+    PERPETUAL_EXCHANGES = {
+        "binance", "bybit", "okx", "bitget", "mexc", "gate"
+    }
+
     def __init__(self):
         self.exchanges: Dict[str, Any] = {}
         self.banned_exchanges: Dict[str, float] = {}  # Tracks IP-banned exchange timestamps
@@ -32,8 +37,11 @@ class ExchangeManager:
                     'timeout': 15000,
                 }
 
-                if ex_id in ["binance", "bybit", "okx", "bitget", "mexc", "gate"]:
+                # Perpetual/swap exchanges – set correct defaultType
+                if ex_id == "binance":
                     options['options'] = {'defaultType': 'future'}
+                elif ex_id in self.PERPETUAL_EXCHANGES:
+                    options['options'] = {'defaultType': 'swap'}
 
                 instance = exchange_class(options)
                 self.exchanges[ex_id] = instance
@@ -41,7 +49,62 @@ class ExchangeManager:
             except Exception as e:
                 logging.warning(f"    ⚠️ Could not initialize exchange {ex_id}: {e}")
 
+<<<<<<< HEAD
     # 👇 NEW METHOD ADDED (Fixes the missing get_exchange error)
+=======
+    # ----------------------------------------------------------------------
+    # HELPER: Safe market loader
+    # ----------------------------------------------------------------------
+    def _ensure_markets_loaded(self, ex, exchange_id: str) -> bool:
+        """
+        Safely load exchange markets. Returns True if markets are available.
+        """
+        try:
+            if ex.markets:
+                return True
+
+            markets = ex.load_markets()
+            if not markets:
+                logging.warning(f"⚠️ Empty market response from {exchange_id.upper()}")
+                return False
+            return True
+
+        except Exception as e:
+            logging.warning(f"⚠️ Market loading failed for {exchange_id.upper()}: {e}")
+            return False
+
+    # ----------------------------------------------------------------------
+    # HELPER: Symbol normalizer (only for perpetual exchanges)
+    # ----------------------------------------------------------------------
+    def _normalize_symbol(self, symbol: str, exchange_id: str) -> str:
+        """
+        Convert a simple symbol (e.g., "BTC") to exchange-specific format.
+        Only modifies symbols for perpetual exchanges (Binance, Bybit, etc.).
+        For spot exchanges, returns the symbol unchanged.
+        """
+        if exchange_id.lower() not in self.PERPETUAL_EXCHANGES:
+            return symbol
+
+        # Already in unified format (e.g., BTC/USDT:USDT)
+        if ":USDT" in symbol:
+            return symbol
+
+        # If no slash, assume base asset only → BTC/USDT:USDT
+        if "/" not in symbol:
+            return f"{symbol}/USDT:USDT"
+
+        # If slash exists, extract base and quote
+        base, quote = symbol.split("/")
+        if quote == "USDT":
+            return f"{base}/USDT:USDT"
+
+        # If quote is not USDT, keep as is (e.g., BTC/USDC) – avoid invalid conversion
+        return symbol
+
+    # ----------------------------------------------------------------------
+    # Existing methods with all fixes
+    # ----------------------------------------------------------------------
+>>>>>>> 12cc7bd (Fix compatibility issues in technical and score fusion engines)
     def get_exchange(self, exchange_id: str):
         """
         Returns the exchange instance for the given exchange ID.
@@ -52,7 +115,7 @@ class ExchangeManager:
         """Check if an exchange is temporarily IP-banned."""
         if exchange_id in self.banned_exchanges:
             ban_time = self.banned_exchanges[exchange_id]
-            if time.time() - ban_time < 600:
+            if time.time() - ban_time < 600:   # 10 minutes cooldown
                 return True
             else:
                 del self.banned_exchanges[exchange_id]
@@ -68,10 +131,11 @@ class ExchangeManager:
         if not ex:
             return {}
 
+        if not self._ensure_markets_loaded(ex, exchange_id):
+            return {}
+
         for attempt in range(2):
             try:
-                if not ex.markets:
-                    ex.load_markets()
                 tickers = ex.fetch_tickers()
                 if not tickers or not isinstance(tickers, dict):
                     return {}
@@ -86,10 +150,10 @@ class ExchangeManager:
         return {}
 
     def fetch_ohlcv_from_exchange(
-        self, 
-        symbol: str, 
-        timeframe: str = "1h", 
-        limit: int = 100, 
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 100,
         exchange_id: str = "binance"
     ) -> Optional[List[List[Any]]]:
         """Fetches raw OHLCV candlestick data with IP Ban fallbacks."""
@@ -100,13 +164,15 @@ class ExchangeManager:
         if not ex:
             return None
 
+        if not self._ensure_markets_loaded(ex, exchange_id):
+            return None
+
+        # Normalize symbol only for perpetual exchanges
+        symbol = self._normalize_symbol(symbol, exchange_id)
+
         try:
-            if not ex.markets:
-                ex.load_markets()
-            
             ohlcv = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
-            time.sleep(0.1)
-            
+            time.sleep(0.1)   # extra safety
             if not ohlcv or not isinstance(ohlcv, list):
                 return None
             return ohlcv
@@ -115,14 +181,15 @@ class ExchangeManager:
             self.banned_exchanges[exchange_id] = time.time()
             return None
         except Exception as e:
-            logging.debug(f"⚠️ Error fetching OHLCV for {symbol} on {exchange_id}: {e}")
+            # Changed to warning so we see the actual error in production
+            logging.warning(f"⚠️ Error fetching OHLCV for {symbol} on {exchange_id}: {e}")
             return None
 
     def fetch_ohlcv_df(
-        self, 
-        symbol: str, 
-        timeframe: str = "1h", 
-        limit: int = 100, 
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        limit: int = 100,
         exchange_id: str = "binance"
     ) -> Optional[pd.DataFrame]:
         """Convenience method: Returns formatted pandas DataFrame."""
@@ -134,7 +201,38 @@ class ExchangeManager:
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
 
+
 if __name__ == "__main__":
     mgr = ExchangeManager()
+
+    # Test tickers from Binance (futures)
     binance_tickers = mgr.fetch_tickers_from_exchange("binance")
+<<<<<<< HEAD
     print(f"Total Tickers fetched from Binance Futures: {len(binance_tickers)}")
+=======
+    print(f"✅ Total Tickers fetched from Binance Futures: {len(binance_tickers)}")
+
+    # Test OHLCV for BTC perpetual
+    df_btc = mgr.fetch_ohlcv_df("BTC", "15m", 200, "binance")
+    if df_btc is not None:
+        print("\n📊 BTC 15m OHLCV (first 5 rows):")
+        print(df_btc.head())
+    else:
+        print("❌ Failed to fetch BTC OHLCV")
+
+    # Test MEXC (which previously caused NoneType error)
+    mexc_tickers = mgr.fetch_tickers_from_exchange("mexc")
+    print(f"✅ Total Tickers fetched from MEXC Futures: {len(mexc_tickers)}")
+
+    # Test SNDK – but check if pair exists first
+    binance = mgr.get_exchange("binance")
+    if binance and "SNDK/USDT:USDT" in binance.markets:
+        df_sndk = mgr.fetch_ohlcv_df("SNDK", "1h", 100, "binance")
+        if df_sndk is not None:
+            print("\n📊 SNDK 1h OHLCV (first 5 rows):")
+            print(df_sndk.head())
+        else:
+            print("❌ Failed to fetch SNDK OHLCV (pair may exist but data unavailable)")
+    else:
+        print("ℹ️ SNDK/USDT:USDT not found on Binance – skipping test")
+>>>>>>> 12cc7bd (Fix compatibility issues in technical and score fusion engines)

@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 class MultiTimeframeEngine:
     """
@@ -6,22 +6,24 @@ class MultiTimeframeEngine:
     - Daily: Macro Trend, Liquidity Sweeps & Key Levels
     - 4H: Market Structure Shift (MSS) & CHOCH Confirmation
     - 1H: Fair Value Gap (FVG) & Order Block (OB) Mitigation
+    - 30M: Intermediate Structure Confirmation (NEW)
     - 15M/5M: Micro Trigger & Optimal Trade Entry (OTE)
     """
 
     @staticmethod
     def evaluate_mtf_alignment(
-        daily_data: dict = None,
-        h4_data: dict = None,
-        h1_data: dict = None,
-        m30_data: dict = None,  # 👈 Fixed: Added m30_data parameter
-        m15_data: dict = None,
-        **kwargs                # 👈 Fixed: Safely accept extra positional/keyword args
-        ) -> Dict[str, Any]:
+        daily_data: Optional[dict] = None,
+        h4_data: Optional[dict] = None,
+        h1_data: Optional[dict] = None,
+        m30_data: Optional[dict] = None,
+        m15_data: Optional[dict] = None,
+        **kwargs  # extra args for future expansion
+    ) -> Dict[str, Any]:
         
         daily_data = daily_data or {}
         h4_data = h4_data or {}
         h1_data = h1_data or {}
+        m30_data = m30_data or {}
         m15_data = m15_data or {}
 
         score = 0
@@ -88,7 +90,38 @@ class MultiTimeframeEngine:
             confluences.append("1H Unmitigated FVG / Order Block Zone Active")
 
         # -------------------------------------------------------------
-        # 4. 15M Entry Setup (Micro Trigger & Execution Zone)
+        # 4. 30M Intermediate Confirmation (NEW)
+        # -------------------------------------------------------------
+        m30_structure = str(m30_data.get("structure", m30_data.get("bias", "NEUTRAL"))).upper()
+        m30_choch = (
+            m30_data.get("choch_confirmed", False) or
+            m30_data.get("mss_confirmed", False)
+        )
+        m30_entry = (
+            m30_data.get("entry_signal", False) or
+            m30_data.get("trigger_confirmed", False)
+        )
+
+        if m30_structure in ["BULLISH", "BEARISH"]:
+            # Add bonus if aligns with daily/4H
+            if (daily_bias == "BULLISH" and m30_structure == "BULLISH") or \
+               (daily_bias == "BEARISH" and m30_structure == "BEARISH"):
+                score += 12
+                confluences.append(f"30M Structure aligns with Daily ({m30_structure})")
+            else:
+                score += 6
+                confluences.append(f"30M Structure {m30_structure.capitalize()} (neutral alignment)")
+
+        if m30_choch:
+            score += 8
+            confluences.append("30M CHOCH/MSS Confirmed")
+
+        if m30_entry:
+            score += 5
+            confluences.append("30M Entry Signal Active")
+
+        # -------------------------------------------------------------
+        # 5. 15M Entry Setup (Micro Trigger & Execution Zone)
         # -------------------------------------------------------------
         m15_entry = (
             m15_data.get("entry_signal", False) or 
@@ -104,8 +137,9 @@ class MultiTimeframeEngine:
             warnings.append("15M Micro Entry not yet fully confirmed")
 
         # -------------------------------------------------------------
-        # 5. Multi-Timeframe Structural Conflict Checks
+        # 6. Multi-Timeframe Structural Conflict Checks
         # -------------------------------------------------------------
+        # Critical: Taking LONG against Daily Bearish or SHORT against Daily Bullish
         if daily_bias == "BEARISH" and m15_entry_type in ["LONG", "BULLISH"]:
             score -= 30
             msg = "⚠️ Critical Conflict: Taking LONG into Daily Bearish Macro Bias"
@@ -117,6 +151,7 @@ class MultiTimeframeEngine:
             warnings.append(msg)
             critical_conflicts.append(msg)
 
+        # Intermediate: 4H vs Daily conflict
         if daily_bias == "BULLISH" and h4_structure == "BEARISH" and not h4_choch:
             score -= 15
             warnings.append("⚠️ Intermediate Conflict: 4H Market Structure is Bearish against Daily Bullish")
@@ -124,31 +159,71 @@ class MultiTimeframeEngine:
             score -= 15
             warnings.append("⚠️ Intermediate Conflict: 4H Market Structure is Bullish against Daily Bearish")
 
+        # New: 30M vs 4H conflict (if both are opposite)
+        if h4_structure in ["BULLISH", "BEARISH"] and m30_structure in ["BULLISH", "BEARISH"]:
+            if h4_structure != m30_structure:
+                score -= 8
+                warnings.append(f"⚠️ Minor Conflict: 30M Structure ({m30_structure}) differs from 4H ({h4_structure})")
+
         final_score = max(0, min(100, score))
         is_aligned = (final_score >= 70) and (len(critical_conflicts) == 0)
+
+        # Alignment Strength
+        if final_score >= 85:
+            alignment_strength = "STRONG"
+        elif final_score >= 70:
+            alignment_strength = "MEDIUM"
+        else:
+            alignment_strength = "WEAK"
 
         return {
             "mtf_score": final_score,
             "is_aligned": is_aligned,
+            "alignment_strength": alignment_strength,
             "confluences": confluences,
             "warnings": warnings,
-            "daily_bias": daily_bias
+            "critical_conflicts": critical_conflicts,
+            "daily_bias": daily_bias,
+            "h4_structure": h4_structure,
+            "m30_structure": m30_structure,
+            "m15_entry_type": m15_entry_type
         }
 
     @classmethod
-    def evaluate_mtf(cls, daily_data: dict, h4_data: dict, h1_data: dict, m15_data: dict) -> Dict[str, Any]:
-        """Direct Alias for seamless integration across pipeline engines"""
-        return cls.evaluate_mtf_alignment(daily_data, h4_data, h1_data, m15_data)
+    def evaluate_mtf(
+        cls,
+        daily_data: Optional[dict] = None,
+        h4_data: Optional[dict] = None,
+        h1_data: Optional[dict] = None,
+        m30_data: Optional[dict] = None,
+        m15_data: Optional[dict] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Alias method for seamless integration across pipeline engines.
+        Now supports all timeframes (including 30M).
+        """
+        return cls.evaluate_mtf_alignment(
+            daily_data=daily_data,
+            h4_data=h4_data,
+            h1_data=h1_data,
+            m30_data=m30_data,
+            m15_data=m15_data,
+            **kwargs
+        )
 
 
 if __name__ == "__main__":
     d_data = {"bias": "BULLISH", "liquidity_swept": True}
     h4_d = {"structure": "BULLISH", "choch_confirmed": True}
     h1_d = {"fvg_present": True, "ob_present": True}
+    m30_d = {"structure": "BULLISH", "choch_confirmed": True, "entry_signal": True}
     m15_d = {"entry_signal": True, "entry_type": "LONG"}
 
-    result = MultiTimeframeEngine.evaluate_mtf(d_data, h4_d, h1_d, m15_d)
+    result = MultiTimeframeEngine.evaluate_mtf(d_data, h4_d, h1_d, m30_d, m15_d)
     print("MTF Score:", result["mtf_score"])
     print("Is Aligned:", result["is_aligned"])
+    print("Strength:", result["alignment_strength"])
     print("Confluences:", result["confluences"])
     print("Warnings:", result["warnings"])
+    print("Critical Conflicts:", result["critical_conflicts"])
