@@ -49,9 +49,6 @@ class ExchangeManager:
             except Exception as e:
                 logging.warning(f"    ⚠️ Could not initialize exchange {ex_id}: {e}")
 
-<<<<<<< HEAD
-    # 👇 NEW METHOD ADDED (Fixes the missing get_exchange error)
-=======
     # ----------------------------------------------------------------------
     # HELPER: Safe market loader
     # ----------------------------------------------------------------------
@@ -104,7 +101,6 @@ class ExchangeManager:
     # ----------------------------------------------------------------------
     # Existing methods with all fixes
     # ----------------------------------------------------------------------
->>>>>>> 12cc7bd (Fix compatibility issues in technical and score fusion engines)
     def get_exchange(self, exchange_id: str):
         """
         Returns the exchange instance for the given exchange ID.
@@ -181,7 +177,6 @@ class ExchangeManager:
             self.banned_exchanges[exchange_id] = time.time()
             return None
         except Exception as e:
-            # Changed to warning so we see the actual error in production
             logging.warning(f"⚠️ Error fetching OHLCV for {symbol} on {exchange_id}: {e}")
             return None
 
@@ -207,9 +202,6 @@ if __name__ == "__main__":
 
     # Test tickers from Binance (futures)
     binance_tickers = mgr.fetch_tickers_from_exchange("binance")
-<<<<<<< HEAD
-    print(f"Total Tickers fetched from Binance Futures: {len(binance_tickers)}")
-=======
     print(f"✅ Total Tickers fetched from Binance Futures: {len(binance_tickers)}")
 
     # Test OHLCV for BTC perpetual
@@ -235,4 +227,3 @@ if __name__ == "__main__":
             print("❌ Failed to fetch SNDK OHLCV (pair may exist but data unavailable)")
     else:
         print("ℹ️ SNDK/USDT:USDT not found on Binance – skipping test")
->>>>>>> 12cc7bd (Fix compatibility issues in technical and score fusion engines)
