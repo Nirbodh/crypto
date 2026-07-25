@@ -50,8 +50,8 @@ class CoinUniverseEngine:
         self.cmc_api_key = cmc_api_key or os.getenv("COINMARKETCAP_API_KEY", "")
         self.coingecko_api_key = coingecko_api_key or os.getenv("COINGECKO_API_KEY", "")
 
-    def fetch_cmc_top_rankings(self, limit: int = 3000) -> Set[str]:
-        """Fetch Top Ranked Market Cap Coins from CoinMarketCap API (Top 3000)."""
+    def fetch_cmc_top_rankings(self, limit: int = 500) -> Set[str]:
+        """Fetch Top Ranked Market Cap Coins from CoinMarketCap API (Top 500)."""
         if not self.cmc_api_key:
             logging.warning("⚠️ CoinMarketCap API key missing. Skipping CMC Rank Filter.")
             return set()
@@ -100,7 +100,7 @@ class CoinUniverseEngine:
         """
         logging.info(f"🌐 Building Institutional Universe (Min Vol: ${min_volume_usdt:,.0f})...")
         
-        cmc_ranks = self.fetch_cmc_top_rankings(limit=3000)
+        cmc_ranks = self.fetch_cmc_top_rankings(limit=500)
         
         symbol_weights: Dict[str, int] = {}
         symbol_max_volumes: Dict[str, float] = {}
