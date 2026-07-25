@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
+
+# ✅ RiskEngine import
 from risk_engine import RiskEngine
 
 load_dotenv()
@@ -70,17 +72,12 @@ class QuantTradingOrchestrator:
             # ================================================================
             df_15m_calc = TechnicalIndicators.calculate_all(df_15m.copy())
             
-            # CVD Score (0-100) from indicators
             cvd_score = float(df_15m_calc['CVD_Score'].iloc[-1]) if 'CVD_Score' in df_15m_calc.columns else 50.0
-            
-            # Session Score (0-100) using SessionIndicators
             session_score = SessionIndicators.get_session_score(df_15m_calc)
-            
-            # FVG Mitigation Score (0-100) from indicators
             fvg_mitigation_score = float(df_15m_calc['FVG_Mitigation_Score'].iloc[-1]) if 'FVG_Mitigation_Score' in df_15m_calc.columns else 50.0
 
             # ================================================================
-            # 3. Layer Calculations (Technical, SMC, Liquidity, MTF, Derivatives, Fundamental)
+            # 3. Layer Calculations
             # ================================================================
             tech_res = self.tech_engine.analyze(df_15m)
             daily_liq_res = self.liq_engine.analyze_liquidity(df_daily)
@@ -88,7 +85,6 @@ class QuantTradingOrchestrator:
             h1_smc_res    = self.smc_engine.analyze(df_1h)
             m30_smc_res   = self.smc_engine.analyze(df_30m)
 
-            # Check if FVG exists in 1H (from SMC engine)
             fvgs = h1_smc_res.get("fvgs", [])
             fvg_present = len(fvgs) > 0
 
@@ -101,7 +97,7 @@ class QuantTradingOrchestrator:
             )
 
             deriv_res = self.deriv_engine.analyze_derivatives(symbol)
-            deriv_res["cvd_score"] = cvd_score  # Inject CVD score
+            deriv_res["cvd_score"] = cvd_score
             
             fund_res = self.fund_engine.fetch_fundamental_data(symbol)
             fear_greed = fund_res.get("fear_and_greed_index", 50.0)
@@ -131,10 +127,37 @@ class QuantTradingOrchestrator:
             qty = round(pos_val / current_price, 4)
 
             # ================================================================
-            # 5. Unified Score Fusion Execution (with all new params)
+            # ✅ 5. RISK ENGINE INTEGRATION
             # ================================================================
+            # Determine direction
+            h1_bias = h1_smc_res.get("bias", "NEUTRAL")
+            tech_bullish = tech_res.get("momentum_bullish", False)
             
-            # ---- FIX: Properly handle red_flags from tech_res (dict) and fund_res (list) ----
+            if h1_bias == "BULLISH" or tech_bullish:
+                direction = "LONG"
+            elif h1_bias == "BEARISH" or (not tech_bullish and h1_bias != "NEUTRAL"):
+                direction = "SHORT"
+            else:
+                direction = "LONG"  # default
+
+            risk_res = RiskEngine.calculate_trade_risk(
+                entry_price=current_price,
+                atr_5m=atr_val,
+                custom_sl_price=sl_price,
+                direction=direction,
+                account_balance=account_balance,
+                market_regime=btc_context.get("market_regime", "TRENDING")
+            )
+            logging.debug(f"📊 RiskEngine result for {symbol}: {risk_res}")
+
+            # ❌ Early reject if risk is invalid
+            if not risk_res.get("valid_trade", False):
+                logging.info(f"⛔ RiskEngine rejected {symbol} - invalid trade (RR: {risk_res.get('risk_metrics', {}).get('risk_reward_ratio', 0):.2f})")
+                return {"symbol": symbol, "status": "RISK_REJECTED"}
+
+            # ================================================================
+            # 6. Unified Score Fusion Execution (with Risk Score)
+            # ================================================================
             tech_flags = tech_res.get("red_flags", {})
             if isinstance(tech_flags, dict):
                 tech_flags = (
@@ -143,7 +166,6 @@ class QuantTradingOrchestrator:
                     + tech_flags.get("minor", [])
                 )
             else:
-                # If it's already a list, use it; otherwise fallback to empty list
                 if not isinstance(tech_flags, list):
                     tech_flags = []
             
@@ -152,7 +174,12 @@ class QuantTradingOrchestrator:
                 fund_flags = []
             
             red_flags = tech_flags + fund_flags
-            # ----------------------------------------------------------------
+
+            # ✅ Extract risk metrics
+            adv = risk_res.get("advanced_metrics", {})
+            risk_score = adv.get("risk_score", 50.0)        # Composite risk score
+            safety_score = adv.get("safety_score", 50.0)
+            position_quality_score = adv.get("position_quality_score", 50.0)
 
             fusion_res = InstitutionalScoreFusionEngine.fuse_scores(
                 symbol=symbol,
@@ -163,14 +190,23 @@ class QuantTradingOrchestrator:
                 derivatives_score=deriv_res.get("derivatives_score", 50.0),
                 fundamental_score=fund_res.get("fundamental_score", 50.0),
                 sentiment_score=sentiment_score,
-                session_score=session_score,                               # Session score
-                fvg_mitigation_score=fvg_mitigation_score,                 # FVG mitigation score
+                session_score=session_score,
+                fvg_mitigation_score=fvg_mitigation_score,
+                # ✅ Risk metrics
+                risk_score=risk_score,
+                safety_score=safety_score,
+                position_quality_score=position_quality_score,
+                effective_leverage=risk_res.get("effective_leverage", 1.0),
+                capital_exposure_pct=risk_res.get("position_size_percent", 50.0),
                 estimated_win_rate=0.65,
                 rr_ratio=2.5,
                 btc_regime_bullish=btc_context["btc_regime_bullish"],
                 market_volatility_high=btc_context["market_volatility_high"],
                 red_flags=red_flags
             )
+
+            # Attach risk result to fusion output
+            fusion_res["risk_engine"] = risk_res
 
             return {
                 "symbol": symbol,
@@ -188,6 +224,7 @@ class QuantTradingOrchestrator:
                 "mtf_res": mtf_res,
                 "deriv_res": deriv_res,
                 "fund_res": fund_res,
+                "risk_res": risk_res,
                 "fusion_res": fusion_res
             }
 
@@ -195,7 +232,7 @@ class QuantTradingOrchestrator:
             logging.exception(f"⚠️ Error processing asset {symbol} in worker thread")
             return {"symbol": symbol, "status": "ERROR", "message": str(e)}
 
-    def scan_and_execute(self, max_universe_size: int = 15):
+    def scan_and_execute(self, max_universe_size: int = 20):
         target_coins = self.universe_engine.build_tradable_universe(
             min_volume_usdt=2_000_000,
             min_exchanges=2
@@ -206,6 +243,7 @@ class QuantTradingOrchestrator:
         df_btc_daily = self.fetcher.get_ohlcv("BTC/USDT", timeframe="1d", limit=100)
         btc_regime_bullish = True
         market_volatility_high = False
+        market_regime = "TRENDING"
 
         if df_btc_daily is not None and not df_btc_daily.empty:
             btc_tech = self.tech_engine.analyze(df_btc_daily)
@@ -216,10 +254,15 @@ class QuantTradingOrchestrator:
             
             btc_atr = btc_tech.get("atr", btc_close * 0.02)
             market_volatility_high = (btc_atr / btc_close) > 0.035
+            if btc_regime_bullish:
+                market_regime = "TRENDING" if not market_volatility_high else "VOLATILE"
+            else:
+                market_regime = "BEAR" if not market_volatility_high else "CRASH"
 
         btc_context = {
             "btc_regime_bullish": btc_regime_bullish,
-            "market_volatility_high": market_volatility_high
+            "market_volatility_high": market_volatility_high,
+            "market_regime": market_regime
         }
 
         scanned_results = []
@@ -235,31 +278,25 @@ class QuantTradingOrchestrator:
                 res = future.result()
                 if res.get("status") == "SUCCESS":
                     scanned_results.append(res)
+                elif res.get("status") == "RISK_REJECTED":
+                    logging.debug(f"⛔ {res['symbol']} rejected by RiskEngine")
 
         scanned_results.sort(key=lambda x: x["fusion_res"]["unified_score"], reverse=True)
 
         logging.info(f"🏆 Parallel Scoring Complete. Evaluating {len(scanned_results)} assets for Gatekeeper & AI Debate...")
+        logging.info("📋 Step 1: Before Gatekeeper - Starting asset evaluation loop...")
 
-        # ================================================================
-        # STEP-BY-STEP LOGGING FOR EACH ASSET
-        # ================================================================
         for asset in scanned_results:
             symbol = asset["symbol"]
             fusion_res = asset["fusion_res"]
 
-            # Step 1: Before Gatekeeper
-            logging.info(f"🔍 [{symbol}] Step 1: Before Gatekeeper (Score: {fusion_res['unified_score']:.2f})")
-
             if not fusion_res['is_passed']:
-                logging.info(f"🚫 [{symbol}] Step 1: Gatekeeper REJECTED (Score below threshold)")
+                logging.debug(f"⛔ Gatekeeper rejected {symbol} (Score: {fusion_res['unified_score']})")
                 continue
-
-            logging.info(f"✅ [{symbol}] Step 1: Gatekeeper PASSED")
+            
+            logging.info(f"✅ Step 2: After Gatekeeper - {symbol} PASSED (Score: {fusion_res['unified_score']})")
 
             try:
-                # Step 2: After Gatekeeper (payload preparation)
-                logging.info(f"📦 [{symbol}] Step 2: Preparing payload for AI Debate")
-
                 payload = {
                     "symbol": symbol,
                     "price": asset["current_price"],
@@ -269,37 +306,31 @@ class QuantTradingOrchestrator:
                     "technical": asset["tech_res"],
                     "smc": asset["h1_smc_res"],
                     "derivatives": asset["deriv_res"],
+                    "risk": asset["risk_res"],
                     "market_microstructure": {
                         "cvd_score": asset["deriv_res"].get("cvd_score", 50.0),
                         "atr": asset["atr_val"]
                     }
                 }
 
-                # Step 3: Before Gemini AI
-                logging.info(f"🤖 [{symbol}] Step 3: Before Gemini AI Debate...")
-
+                logging.info(f"🧠 Step 3: Before Gemini AI Debate for {symbol}...")
                 ai_res = self.ai_engine.run_debate(payload)
                 ai_confidence = int(ai_res.get('confidence', 0))
                 ai_decision = ai_res.get('final_decision', 'HOLD')
-
-                # Step 4: After Gemini
-                logging.info(f"🧠 [{symbol}] Step 4: After Gemini → Decision: {ai_decision}, Confidence: {ai_confidence}%")
-
-                # Step 5: Before Database (check cooldown again)
-                logging.info(f"💾 [{symbol}] Step 5: Checking cooldown before saving...")
-                if self.is_duplicate_signal(symbol):
-                    logging.info(f"⏳ [{symbol}] Step 5: Duplicate signal (cooling down) – skipping")
-                    continue
-
-                # Step 6: Before Telegram (final signal check)
-                logging.info(f"📨 [{symbol}] Step 6: Before Telegram – verifying thresholds...")
+                logging.info(f"✅ Step 4: After Gemini AI Debate for {symbol} - Decision: {ai_decision}, Confidence: {ai_confidence}%")
 
                 if (
                     fusion_res['unified_score'] >= (78.0 if market_volatility_high else 72.0) and
                     ai_confidence >= 70 and
                     ai_decision in ["EXECUTE_LONG", "EXECUTE_SHORT"]
                 ):
-                    logging.info(f"🚀 [{symbol}] Step 6: SIGNAL TRIGGERED! Sending to Telegram...")
+                    logging.info(f"🚀 HIGH CONVICTION SIGNAL for {symbol}! Dispatching...")
+                    
+                    logging.info(f"💾 Step 5: Before Database Save for {symbol}...")
+                    self.db.save_trade_signal(payload=payload, ai_verdict=ai_res)
+                    logging.info(f"✅ Database record saved for {symbol}.")
+
+                    logging.info(f"📤 Step 6: Before Telegram Alert for {symbol}...")
                     self.telegram.send_trade_signal(
                         symbol=symbol,
                         decision=ai_decision,
@@ -311,28 +342,17 @@ class QuantTradingOrchestrator:
                         tp=asset["tp_price"],
                         summary=ai_res.get('summary', 'High conviction trade detected.')
                     )
-
-                    # Step 7: Save to Database
-                    logging.info(f"💾 [{symbol}] Step 7: Saving signal to Database...")
-                    self.db.save_trade_signal(payload=payload, ai_verdict=ai_res)
-                    logging.info(f"✅ [{symbol}] Step 7: Finished (signal saved & sent)")
+                    logging.info(f"✅ Telegram alert sent for {symbol}.")
                 else:
-                    # 조건 미충족 시 로깅
-                    reason = []
-                    if fusion_res['unified_score'] < (78.0 if market_volatility_high else 72.0):
-                        reason.append(f"score {fusion_res['unified_score']:.2f} < threshold")
-                    if ai_confidence < 70:
-                        reason.append(f"AI confidence {ai_confidence}% < 70%")
-                    if ai_decision not in ["EXECUTE_LONG", "EXECUTE_SHORT"]:
-                        reason.append(f"AI decision '{ai_decision}' not executable")
-                    logging.info(f"⏭️ [{symbol}] Step 6-7: Skipped – {'; '.join(reason)}")
+                    logging.info(f"⏳ {symbol} did not meet final execution criteria. Score: {fusion_res['unified_score']}, Conf: {ai_confidence}")
+
+                logging.info(f"✅ Step 7: Finished processing {symbol}")
 
             except Exception as e:
-                logging.exception(f"⚠️ Error processing asset {symbol} in worker thread")
-                # Continue with next asset, don't stop whole loop
+                logging.exception(f"⚠️ Error processing asset {symbol} in main loop")
                 continue
 
-    def run_forever(self, scan_limit: int = 15, poll_interval_seconds: int = 300):
+    def run_forever(self, scan_limit: int = 20, poll_interval_seconds: int = 300):
         while True:
             try:
                 self.scan_and_execute(max_universe_size=scan_limit)
@@ -340,8 +360,9 @@ class QuantTradingOrchestrator:
             except KeyboardInterrupt:
                 break
             except Exception as e:
+                logging.error(f"🔥 Critical error in main loop: {e}")
                 time.sleep(15)
 
 if __name__ == "__main__":
     orchestrator = QuantTradingOrchestrator()
-    orchestrator.run_forever(scan_limit=15, poll_interval_seconds=300)
+    orchestrator.run_forever(scan_limit=20, poll_interval_seconds=300)
