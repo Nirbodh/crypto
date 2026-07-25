@@ -1,13 +1,10 @@
 import pandas as pd
 import numpy as np
-<<<<<<< HEAD
 import ta
-=======
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, ADXIndicator, EMAIndicator
 from ta.volatility import AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator
->>>>>>> 12cc7bd (Fix compatibility issues in technical and score fusion engines)
 from typing import Dict, Optional, List, Tuple
 
 # ============================================================
