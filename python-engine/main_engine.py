@@ -8,7 +8,6 @@ from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
-# ✅ RiskEngine import
 from risk_engine import RiskEngine
 
 load_dotenv()
@@ -67,18 +66,18 @@ class QuantTradingOrchestrator:
 
             current_price = float(df_15m['close'].iloc[-1])
 
-            # ================================================================
+            # ============================================================
             # 2. Unified Indicator Calculation (CVD, Session, FVG Mitigation)
-            # ================================================================
+            # ============================================================
             df_15m_calc = TechnicalIndicators.calculate_all(df_15m.copy())
             
             cvd_score = float(df_15m_calc['CVD_Score'].iloc[-1]) if 'CVD_Score' in df_15m_calc.columns else 50.0
             session_score = SessionIndicators.get_session_score(df_15m_calc)
             fvg_mitigation_score = float(df_15m_calc['FVG_Mitigation_Score'].iloc[-1]) if 'FVG_Mitigation_Score' in df_15m_calc.columns else 50.0
 
-            # ================================================================
+            # ============================================================
             # 3. Layer Calculations
-            # ================================================================
+            # ============================================================
             tech_res = self.tech_engine.analyze(df_15m)
             daily_liq_res = self.liq_engine.analyze_liquidity(df_daily)
             h4_smc_res    = self.smc_engine.analyze(df_4h)
@@ -103,9 +102,9 @@ class QuantTradingOrchestrator:
             fear_greed = fund_res.get("fear_and_greed_index", 50.0)
             sentiment_score = float(fear_greed) if isinstance(fear_greed, (int, float)) else 50.0
 
-            # ================================================================
+            # ============================================================
             # 4. Dynamic SL, TP & Position Sizing
-            # ================================================================
+            # ============================================================
             atr_val = tech_res.get("atr", current_price * 0.02)
             swing_low = daily_liq_res.get("swing_low", current_price * 0.98)
             order_block_low = h1_smc_res.get("order_block_price", current_price * 0.985)
@@ -126,23 +125,39 @@ class QuantTradingOrchestrator:
             pos_val = max(100.0, min(pos_val, 5000.0))
             qty = round(pos_val / current_price, 4)
 
-            # ================================================================
-            # ✅ 5. RISK ENGINE INTEGRATION (UPDATED with ATR rolling stats)
-            # ================================================================
-            # Determine direction
+            # ============================================================
+            # 5. RISK ENGINE INTEGRATION
+            # ============================================================
+            # Determine direction (respecting market regime)
             h1_bias = h1_smc_res.get("bias", "NEUTRAL")
             tech_bullish = tech_res.get("momentum_bullish", False)
+            market_regime = btc_context.get("market_regime", "TRENDING")
             
+            # Preferred direction based on SMC/Technical
             if h1_bias == "BULLISH" or tech_bullish:
-                direction = "LONG"
+                preferred_direction = "LONG"
             elif h1_bias == "BEARISH" or (not tech_bullish and h1_bias != "NEUTRAL"):
-                direction = "SHORT"
+                preferred_direction = "SHORT"
             else:
-                direction = "LONG"  # default
+                preferred_direction = "LONG"
 
-            # 🔥 NEW: Calculate rolling ATR mean & std (so ATR Z-score works)
+            # Adjust direction based on market regime
+            if market_regime in ["BEAR", "CRASH"]:
+                if preferred_direction == "LONG":
+                    # Try SHORT if SMC bias is bearish or neutral with bearish tech
+                    if h1_bias == "BEARISH" or (not tech_bullish and h1_bias != "BULLISH"):
+                        direction = "SHORT"
+                        logging.debug(f"🔄 {symbol}: Market regime {market_regime} - overriding LONG to SHORT")
+                    else:
+                        logging.info(f"⛔ {symbol}: Market regime {market_regime} and bias {h1_bias} - no safe direction")
+                        return {"symbol": symbol, "status": "RISK_REJECTED", "reason": "No safe direction in BEAR/CRASH"}
+                else:
+                    direction = preferred_direction
+            else:
+                direction = preferred_direction
+
+            # Calculate rolling ATR mean & std (for ATR Z-score)
             df_atr = df_15m.copy()
-            # Use 14-period ATR (or whatever is available)
             atr_series = df_atr['high'] - df_atr['low']
             atr_series = atr_series.rolling(14).mean().fillna(atr_val)
             atr_rolling_mean = float(atr_series.iloc[-20:].mean()) if len(atr_series) >= 20 else atr_val
@@ -154,20 +169,22 @@ class QuantTradingOrchestrator:
                 custom_sl_price=sl_price,
                 direction=direction,
                 account_balance=account_balance,
-                market_regime=btc_context.get("market_regime", "TRENDING"),
-                atr_rolling_mean=atr_rolling_mean,   # ✅ NEW
-                atr_rolling_std=atr_rolling_std      # ✅ NEW
+                market_regime=market_regime,
+                atr_rolling_mean=atr_rolling_mean,
+                atr_rolling_std=atr_rolling_std
             )
             logging.debug(f"📊 RiskEngine result for {symbol}: {risk_res}")
 
-            # ❌ Early reject if risk is invalid
+            # Early reject if risk is invalid
             if not risk_res.get("valid_trade", False):
-                logging.info(f"⛔ RiskEngine rejected {symbol} - invalid trade (RR: {risk_res.get('risk_metrics', {}).get('risk_reward_ratio', 0)})")
+                invalidation_reasons = risk_res.get("invalidation_reasons", [])
+                reason_str = ", ".join(invalidation_reasons) if invalidation_reasons else "Unknown reason"
+                logging.info(f"⛔ RiskEngine rejected {symbol} - {reason_str} (RR: {risk_res.get('risk_metrics', {}).get('risk_reward_ratio', 'N/A')})")
                 return {"symbol": symbol, "status": "RISK_REJECTED"}
 
-            # ================================================================
-            # 6. Unified Score Fusion Execution (with Risk Score & Dynamic Win Rate)
-            # ================================================================
+            # ============================================================
+            # 6. Unified Score Fusion Execution
+            # ============================================================
             tech_flags = tech_res.get("red_flags", {})
             if isinstance(tech_flags, dict):
                 tech_flags = (
@@ -185,31 +202,26 @@ class QuantTradingOrchestrator:
             
             red_flags = tech_flags + fund_flags
 
-            # ✅ Extract risk metrics (now risk_score exists in advanced_metrics)
             adv = risk_res.get("advanced_metrics", {})
-            risk_score = adv.get("risk_score", 50.0)          # Composite risk score
+            risk_score = adv.get("risk_score", 50.0)
             safety_score = adv.get("safety_score", 50.0)
             position_quality_score = adv.get("position_quality_score", 50.0)
 
-            # ✅ Use calculated RR from RiskEngine (instead of hardcoded 2.5)
             rr_ratio_raw = risk_res.get("risk_metrics", {}).get("rr_score_raw", 2.0)
             effective_rr = max(1.0, float(rr_ratio_raw))
 
-            # 🔥 NEW: Dynamic Estimated Win Rate (Problem 2 fix)
-            # Blend: Tech (40%) + SMC (30%) + MTF (20%) + Liquidity (10%)
+            # Dynamic Estimated Win Rate
             tech_score_val = tech_res.get("technical_score", 50.0)
             smc_score_val = h1_smc_res.get("smc_score", 50.0)
             mtf_score_val = mtf_res.get("mtf_score", 50.0)
             liq_score_val = daily_liq_res.get("liquidity_score", 50.0)
             
-            # Normalize to 0.3 - 0.75 range (minimum 30% win rate, max 75%)
             composite_win_rate = (
                 (tech_score_val / 100.0) * 0.40 +
                 (smc_score_val / 100.0) * 0.30 +
                 (mtf_score_val / 100.0) * 0.20 +
                 (liq_score_val / 100.0) * 0.10
             )
-            # Scale to 30% - 75%
             estimated_win_rate = 0.30 + (composite_win_rate * 0.45)
             estimated_win_rate = round(max(0.30, min(0.75, estimated_win_rate)), 3)
 
@@ -224,23 +236,20 @@ class QuantTradingOrchestrator:
                 sentiment_score=sentiment_score,
                 session_score=session_score,
                 fvg_mitigation_score=fvg_mitigation_score,
-                # ✅ Risk metrics (all three)
                 risk_score=risk_score,
                 safety_score=safety_score,
                 position_quality_score=position_quality_score,
                 effective_leverage=risk_res.get("effective_leverage", 1.0),
                 capital_exposure_pct=risk_res.get("position_size_percent", 50.0),
-                estimated_win_rate=estimated_win_rate,   # ✅ DYNAMIC
-                rr_ratio=effective_rr,                   # ✅ DYNAMIC (from RiskEngine)
+                estimated_win_rate=estimated_win_rate,
+                rr_ratio=effective_rr,
                 btc_regime_bullish=btc_context["btc_regime_bullish"],
                 market_volatility_high=btc_context["market_volatility_high"],
                 red_flags=red_flags
             )
 
-            # Attach risk result to fusion output
             fusion_res["risk_engine"] = risk_res
 
-            # ✅ Log component scores for debugging
             logging.info(
                 f"📊 {symbol} Component Scores: "
                 f"Tech={tech_score_val:.1f}, "
@@ -326,7 +335,8 @@ class QuantTradingOrchestrator:
                 if res.get("status") == "SUCCESS":
                     scanned_results.append(res)
                 elif res.get("status") == "RISK_REJECTED":
-                    logging.debug(f"⛔ {res['symbol']} rejected by RiskEngine")
+                    reason = res.get("reason", "RR/risk criteria not met")
+                    logging.debug(f"⛔ {res['symbol']} rejected by RiskEngine: {reason}")
 
         scanned_results.sort(key=lambda x: x["fusion_res"]["unified_score"], reverse=True)
 
@@ -349,7 +359,7 @@ class QuantTradingOrchestrator:
                     "price": asset["current_price"],
                     "gatekeeper_passed": fusion_res['is_passed'],
                     "unified_score": fusion_res['unified_score'],
-                    "ev_r": fusion_res.get("net_ev_r", 0.0),   # ✅ FIXED: net_ev_r
+                    "ev_r": fusion_res.get("net_ev_r", 0.0),
                     "technical": asset["tech_res"],
                     "smc": asset["h1_smc_res"],
                     "derivatives": asset["deriv_res"],
@@ -383,7 +393,7 @@ class QuantTradingOrchestrator:
                         decision=ai_decision,
                         confidence=ai_confidence,
                         score=fusion_res['unified_score'],
-                        ev_r=fusion_res.get("net_ev_r", 0.0),   # ✅ FIXED: net_ev_r
+                        ev_r=fusion_res.get("net_ev_r", 0.0),
                         entry=asset["current_price"],
                         sl=asset["sl_price"],
                         tp=asset["tp_price"],
