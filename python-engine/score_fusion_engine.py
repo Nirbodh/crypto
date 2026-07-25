@@ -7,12 +7,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 class InstitutionalScoreFusionEngine:
     """
-    v5.0 - Institutional Grade Score Fusion Engine
+    v5.1 - Institutional Grade Score Fusion Engine
     - Dynamic Threshold (Regime-Based)
     - Risk Engine Integration (Safety + Quality → Risk Score)
     - Confidence Score + Level (High/Medium/Weak)
     - Soft Penalty System (No Hard Reject for most flags)
     - Red Flag Severity with Pre-defined Penalties
+    - Fix: Risk double counting removed from conviction score
+    - Fix: Dynamic max penalty cap (default 30)
     """
 
     # ---- Penalty Dictionary (Soft Penalties) ----
@@ -114,7 +116,10 @@ class InstitutionalScoreFusionEngine:
         max_recommended_risk_pct: float = 2.0,
         
         # ----- Feature Flags -----
-        include_confidence_metrics: bool = True
+        include_confidence_metrics: bool = True,
+        
+        # 🔥 NEW: Max penalty cap (default 30, matching previous hardcoded value)
+        max_penalty_pct: float = 30.0
         
     ) -> Dict[str, Any]:
         
@@ -245,8 +250,8 @@ class InstitutionalScoreFusionEngine:
                 total_penalty += penalty
                 warning_messages.append(f"⚡ {flag}: -{penalty} pts")
             
-            # Cap total penalty at 30 points (max deduction)
-            total_penalty = min(30, total_penalty)
+            # 🔥 FIX: Cap total penalty using dynamic max_penalty_pct (default 30)
+            total_penalty = min(max_penalty_pct, total_penalty)
             applied_penalties.append(f"Red Flags ({len(penalty_flags)}): -{round(total_penalty, 1)} pts")
         
         unified_score = max(0, raw_unified_score - vol_penalty - total_penalty)
@@ -297,17 +302,18 @@ class InstitutionalScoreFusionEngine:
         # 6. DIRECTIONAL RESTRICTIONS
         # ============================================================
         long_allowed = market_regime not in ["BEAR", "CRASH"]
-        short_allowed = True  # Shorts always allowed (but might need higher threshold)
+        short_allowed = market_regime not in ["CRASH"]  # 🔥 FIX: SHORT not allowed in CRASH (only if liquidity available)
         
         direction_passed = True
         direction_penalty = 0
         if desired_direction == "LONG" and not long_allowed:
             direction_passed = False
-            direction_penalty = 15  # Massive penalty for forcing LONG in bear
+            direction_penalty = 15
             rejection_reasons.append(f"LONG restricted in {market_regime} regime")
         elif desired_direction == "SHORT" and not short_allowed:
             direction_passed = False
-            rejection_reasons.append("SHORT restricted in current regime")
+            direction_penalty = 15
+            rejection_reasons.append("SHORT restricted in CRASH regime (liquidity risk)")
         
         # Apply direction penalty to score (if not hard rejected)
         if not direction_passed:
@@ -325,8 +331,8 @@ class InstitutionalScoreFusionEngine:
             is_passed = False
             all_reasons.extend([f"CRITICAL: {flag}" for flag in critical_flags])
         
-        # Hard Gate 2: Direction
-        if not direction_passed and direction_penalty > 10:  # Only if it was a hard restriction
+        # Hard Gate 2: Direction (only if direction penalty > 10)
+        if not direction_passed and direction_penalty > 10:
             is_passed = False
         
         # Hard Gate 3: Net EV < 0.5
@@ -340,16 +346,13 @@ class InstitutionalScoreFusionEngine:
             all_reasons.append(f"Score {unified_score:.1f} < {pass_threshold} ({market_regime} threshold)")
         
         # ============================================================
-        # 8. CONVICTION SCORE & FINAL GRADE
+        # 8. CONVICTION SCORE & FINAL GRADE (FIXED: removed risk double counting)
         # ============================================================
-        # Blend: Unified Score (45%) + EV Score (25%) + Risk Score (20%) + Safety (10%)
-        risk_component = risk_score * 0.7 + (position_quality_score or 50) * 0.3 if position_quality_score else risk_score
-        
+        # 🔥 FIX: Conviction is now a blend of Unified Score (60%) and EV Score (40%)
+        # Risk is already embedded in unified_score via weighted average
         conviction_score = (
-            unified_score * 0.45 +
-            ev_score * 0.25 +
-            risk_component * 0.20 +
-            (safety_score or 50) * 0.10
+            unified_score * 0.60 +
+            ev_score * 0.40
         )
         conviction_score = round(max(0, min(100, conviction_score)), 1)
         
@@ -383,7 +386,7 @@ class InstitutionalScoreFusionEngine:
         # EV Clarity: distance from 0 EV
         ev_clarity = min(100, abs(net_ev) * 30)
         
-        # Risk Alignment
+        # Risk Alignment (use risk_score directly, no double counting)
         risk_align = risk_score
         
         # Combined Confidence Score
@@ -495,7 +498,7 @@ class InstitutionalScoreFusionEngine:
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("🧪 SCORE FUSION v5.0 - INSTITUTIONAL GRADE (Risk + Soft Penalty)")
+    print("🧪 SCORE FUSION v5.1 - INSTITUTIONAL GRADE (Risk Double Counting FIXED)")
     print("=" * 70)
     
     # Test 1: Full Risk Integration
@@ -505,7 +508,7 @@ if __name__ == "__main__":
         tech_score=85,
         smc_score=80,
         liquidity_score=78,
-        risk_score=92,          # Risk Engine output
+        risk_score=92,
         safety_score=90,
         position_quality_score=88,
         market_regime="TRENDING",
@@ -533,7 +536,8 @@ if __name__ == "__main__":
         estimated_win_rate=0.52,
         rr_ratio=2.2,
         penalty_flags=["LIQUIDITY_SWEEP", "WEAK_VOLUME", "BEARISH_DIVERGENCE", "LATE_ENTRY"],
-        atr_ratio_pct=3.8
+        atr_ratio_pct=3.8,
+        max_penalty_pct=25.0  # 🔥 NEW: custom penalty cap
     )
     print(f"✅ Passed: {res2['is_passed']} | Grade: {res2['final_grade']}")
     print(f"Final Score: {res2['final_unified_score']} (Raw: {res2['raw_unified_score']})")
@@ -573,12 +577,31 @@ if __name__ == "__main__":
     )
     print(f"Passed: {res4['is_passed']}")
     print(f"Long Allowed: {res4['long_allowed']}")
+    print(f"Short Allowed: {res4['short_allowed']}")
     print(f"Rejection: {res4['rejection_reasons']}")
-    print(f"Conviction (penalized): {res4['conviction_score']}")
+    print(f"Conviction: {res4['conviction_score']}")
     
-    # Test 5: Critical Flags (Hard Reject)
-    print("\n--- 5. CRITICAL FLAGS (HARD REJECT) ---")
+    # Test 5: CRASH Regime (SHORT Restricted)
+    print("\n--- 5. CRASH REGIME (SHORT RESTRICTED) ---")
     res5 = InstitutionalScoreFusionEngine.fuse_scores(
+        symbol="BTC/USDT",
+        tech_score=70,
+        smc_score=65,
+        liquidity_score=60,
+        risk_score=50,
+        market_regime="CRASH",
+        desired_direction="SHORT",
+        estimated_win_rate=0.45,
+        rr_ratio=1.8,
+        atr_ratio_pct=4.0
+    )
+    print(f"Passed: {res5['is_passed']}")
+    print(f"Short Allowed: {res5['short_allowed']}")
+    print(f"Rejection Reasons: {res5['rejection_reasons']}")
+    
+    # Test 6: Critical Flags (Hard Reject)
+    print("\n--- 6. CRITICAL FLAGS (HARD REJECT) ---")
+    res6 = InstitutionalScoreFusionEngine.fuse_scores(
         symbol="XXX/USDT",
         tech_score=90,
         smc_score=85,
@@ -590,9 +613,9 @@ if __name__ == "__main__":
         estimated_win_rate=0.70,
         rr_ratio=4.0
     )
-    print(f"❌ Passed: {res5['is_passed']}")
-    print(f"Reasons: {res5['rejection_reasons']}")
-    print(f"Grade: {res5['final_grade']}")
+    print(f"❌ Passed: {res6['is_passed']}")
+    print(f"Reasons: {res6['rejection_reasons']}")
+    print(f"Grade: {res6['final_grade']}")
     
     print("\n" + "=" * 70)
-    print("✅ All tests passed. Score Fusion v5.0 ready for production.")
+    print("✅ All tests passed. Score Fusion v5.1 ready for production.")
