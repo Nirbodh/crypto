@@ -127,7 +127,7 @@ class QuantTradingOrchestrator:
             qty = round(pos_val / current_price, 4)
 
             # ================================================================
-            # ✅ 5. RISK ENGINE INTEGRATION
+            # ✅ 5. RISK ENGINE INTEGRATION (FIXED)
             # ================================================================
             # Determine direction
             h1_bias = h1_smc_res.get("bias", "NEUTRAL")
@@ -152,11 +152,11 @@ class QuantTradingOrchestrator:
 
             # ❌ Early reject if risk is invalid
             if not risk_res.get("valid_trade", False):
-                logging.info(f"⛔ RiskEngine rejected {symbol} - invalid trade (RR: {risk_res.get('risk_metrics', {}).get('risk_reward_ratio', 0):.2f})")
+                logging.info(f"⛔ RiskEngine rejected {symbol} - invalid trade (RR: {risk_res.get('risk_metrics', {}).get('risk_reward_ratio', 0)})")
                 return {"symbol": symbol, "status": "RISK_REJECTED"}
 
             # ================================================================
-            # 6. Unified Score Fusion Execution (with Risk Score)
+            # 6. Unified Score Fusion Execution (with Risk Score) - FIXED
             # ================================================================
             tech_flags = tech_res.get("red_flags", {})
             if isinstance(tech_flags, dict):
@@ -175,11 +175,17 @@ class QuantTradingOrchestrator:
             
             red_flags = tech_flags + fund_flags
 
-            # ✅ Extract risk metrics
+            # ✅ Extract risk metrics correctly (now risk_score exists in advanced_metrics)
             adv = risk_res.get("advanced_metrics", {})
-            risk_score = adv.get("risk_score", 50.0)        # Composite risk score
+            risk_score = adv.get("risk_score", 50.0)          # Composite risk score (now available)
             safety_score = adv.get("safety_score", 50.0)
             position_quality_score = adv.get("position_quality_score", 50.0)
+
+            # ✅ Use calculated RR from RiskEngine instead of hardcoded 2.5
+            rr_ratio_raw = risk_res.get("risk_metrics", {}).get("rr_score_raw", 2.0)
+            # rr_score_raw is the actual numeric RR (e.g., 1.5, 2.8, etc.)
+            # If it's less than 1.0, cap it to 1.0 to avoid negative EV
+            effective_rr = max(1.0, float(rr_ratio_raw))
 
             fusion_res = InstitutionalScoreFusionEngine.fuse_scores(
                 symbol=symbol,
@@ -192,14 +198,14 @@ class QuantTradingOrchestrator:
                 sentiment_score=sentiment_score,
                 session_score=session_score,
                 fvg_mitigation_score=fvg_mitigation_score,
-                # ✅ Risk metrics
+                # ✅ Risk metrics (all three)
                 risk_score=risk_score,
                 safety_score=safety_score,
                 position_quality_score=position_quality_score,
                 effective_leverage=risk_res.get("effective_leverage", 1.0),
                 capital_exposure_pct=risk_res.get("position_size_percent", 50.0),
                 estimated_win_rate=0.65,
-                rr_ratio=2.5,
+                rr_ratio=effective_rr,           # ✅ Using calculated RR
                 btc_regime_bullish=btc_context["btc_regime_bullish"],
                 market_volatility_high=btc_context["market_volatility_high"],
                 red_flags=red_flags
@@ -207,6 +213,20 @@ class QuantTradingOrchestrator:
 
             # Attach risk result to fusion output
             fusion_res["risk_engine"] = risk_res
+
+            # ✅ Log component scores for debugging
+            logging.info(
+                f"📊 {symbol} Component Scores: "
+                f"Tech={tech_res.get('technical_score', 50):.1f}, "
+                f"SMC={h1_smc_res.get('smc_score', 50):.1f}, "
+                f"Liq={daily_liq_res.get('liquidity_score', 50):.1f}, "
+                f"MTF={mtf_res.get('mtf_score', 50):.1f}, "
+                f"Deriv={deriv_res.get('derivatives_score', 50):.1f}, "
+                f"Fund={fund_res.get('fundamental_score', 50):.1f}, "
+                f"Risk={risk_score:.1f}, "
+                f"RR={effective_rr:.2f}, "
+                f"Final={fusion_res['unified_score']:.1f}"
+            )
 
             return {
                 "symbol": symbol,
@@ -302,7 +322,7 @@ class QuantTradingOrchestrator:
                     "price": asset["current_price"],
                     "gatekeeper_passed": fusion_res['is_passed'],
                     "unified_score": fusion_res['unified_score'],
-                    "ev_r": fusion_res['ev_r'],
+                    "ev_r": fusion_res.get("net_ev_r", 0.0),   # ✅ FIX: net_ev_r instead of ev_r
                     "technical": asset["tech_res"],
                     "smc": asset["h1_smc_res"],
                     "derivatives": asset["deriv_res"],
@@ -336,7 +356,7 @@ class QuantTradingOrchestrator:
                         decision=ai_decision,
                         confidence=ai_confidence,
                         score=fusion_res['unified_score'],
-                        ev_r=fusion_res['ev_r'],
+                        ev_r=fusion_res.get("net_ev_r", 0.0),   # ✅ FIX: net_ev_r
                         entry=asset["current_price"],
                         sl=asset["sl_price"],
                         tp=asset["tp_price"],
