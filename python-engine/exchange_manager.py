@@ -13,13 +13,13 @@ class ExchangeManager:
     Supports Spot & Perpetual Derivatives via CCXT with IP-Ban & Rate-Limit Shield.
     """
     SUPPORTED_EXCHANGES = [
-        "bybit", "mexc", "okx", "gate", "bitget",
-        "kucoin", "binance", "coinbase", "kraken", "htx"
+        "bybit", "mexc",  "bitget",
+        "kucoin", "binance", "coinbase", "kraken", 
     ]
 
     # Exchanges that support perpetual futures (USDT-margined)
     PERPETUAL_EXCHANGES = {
-        "binance", "bybit", "okx", "bitget", "mexc", "gate"
+        "binance", "bybit", "bitget", "mexc", 
     }
 
     def __init__(self):
