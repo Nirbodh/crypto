@@ -292,7 +292,7 @@ class QuantTradingOrchestrator:
                     "status": "ERROR"
                 }
 
-    def run_forever(self, scan_limit: int = 50, poll_interval_seconds: int = 300):
+    def run_forever(self, scan_limit: int = 30, poll_interval_seconds: int = 300):
         while True:
             try:
                 self.scan_and_execute(max_universe_size=scan_limit)
