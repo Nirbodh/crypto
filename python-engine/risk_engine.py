@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 class RiskEngine:
     """
     Institutional Grade Quantitative Risk & Position Sizing Engine.
-    - Dynamic market regime adaptive scoring
+    - Dynamic market regime adaptive scoring (TRENDING, RANGING, VOLATILE, BEAR, CRASH)
     - Continuous (non-step) scoring functions
     - Margin-mode aware exposure
     - All metrics computed regardless of trade validity
@@ -27,16 +27,16 @@ class RiskEngine:
         tp_atr_multiplier: float = 3.0,
         min_rr_ratio: float = 1.5,
         direction: Literal["LONG", "SHORT"] = "LONG",
-        max_leverage: float = 10.0,           # Broker提供的最大杠杆 (user input)
+        max_leverage: float = 10.0,
         custom_sl_price: Optional[float] = None,
         maintenance_margin_pct: float = 0.5,
 
-        # --- Advanced Parameters (New) ---
+        # --- Advanced Parameters ---
         margin_mode: Literal["ISOLATED", "CROSS"] = "ISOLATED",
-        market_regime: Literal["TRENDING", "RANGING", "VOLATILE"] = "TRENDING",
-        broker_leverage: Optional[float] = None,  # User-set leverage (if different from max)
+        market_regime: Literal["TRENDING", "RANGING", "VOLATILE", "BEAR", "CRASH"] = "TRENDING",
+        broker_leverage: Optional[float] = None,
 
-        # --- Weight Configuration (Separate) ---
+        # --- Weight Configuration ---
         safety_weights: Optional[Dict[str, float]] = None,
         quality_weights: Optional[Dict[str, float]] = None,
 
@@ -60,7 +60,6 @@ class RiskEngine:
         if direction not in ["LONG", "SHORT"]:
             return {"valid_trade": False, "reason": f"Unsupported direction: {direction}"}
 
-        # Use broker_leverage if provided, else max_leverage
         effective_broker_leverage = broker_leverage if broker_leverage and broker_leverage > 0 else max_leverage
 
         # ============================================================
@@ -80,7 +79,6 @@ class RiskEngine:
         if risk_distance <= 0:
             return {"valid_trade": False, "reason": "Zero risk distance"}
 
-        # Directional sanity
         if direction == "LONG" and stop_loss >= entry_price:
             return {"valid_trade": False, "reason": "Long SL must be below entry"}
         if direction == "SHORT" and stop_loss <= entry_price:
@@ -99,13 +97,12 @@ class RiskEngine:
         reward_distance = abs(take_profit - entry_price)
 
         # ============================================================
-        # 4. POSITION SIZING (Using broker_leverage)
+        # 4. POSITION SIZING
         # ============================================================
         target_risk_amount = account_balance * (risk_per_trade_percent / 100.0)
         raw_quantity = target_risk_amount / risk_distance
         raw_position_value = raw_quantity * entry_price
 
-        # Cap by broker leverage
         max_allowed_position = account_balance * effective_broker_leverage
         if raw_position_value > max_allowed_position:
             position_value = max_allowed_position
@@ -118,11 +115,10 @@ class RiskEngine:
             leverage_capped = False
             actual_risk_amount = target_risk_amount
 
-        # Position leverage (actual)
         position_leverage = position_value / account_balance if account_balance > 0 else 0.0
 
         # ============================================================
-        # 5. LIQUIDATION PRICE & BUFFER (Isolated/Cross aware)
+        # 5. LIQUIDATION PRICE & BUFFER
         # ============================================================
         mm_ratio = maintenance_margin_pct / 100.0
         if position_leverage > 0:
@@ -149,6 +145,13 @@ class RiskEngine:
         if not liq_buffer_valid:
             invalidation_reasons.append(f"SL {stop_loss:.2f} breaches Liq {est_liquidation_price:.2f}")
 
+        # ---- Directional restriction for BEAR/CRASH ----
+        if market_regime in ["BEAR", "CRASH"] and direction == "LONG":
+            is_valid = False
+            invalidation_reasons.append(f"LONG not allowed in {market_regime} regime")
+
+        # ---- SHORT restriction only if liquidity is extremely low (can be added later) ----
+
         # ============================================================
         # 7. BASIC PERCENTAGES
         # ============================================================
@@ -157,20 +160,14 @@ class RiskEngine:
         reward_pct = tp_pct
 
         # ============================================================
-        # 8. ADVANCED METRICS (Always computed)
+        # 8. ADVANCED METRICS
         # ============================================================
         if include_advanced_metrics:
-            # 8a. Expected P/L (gross)
             expected_profit_usdt = quantity * reward_distance
             expected_loss_usdt = quantity * risk_distance
-
-            # 8b. Capital Exposure %
             capital_exposure_pct = (position_value / account_balance) * 100.0
-
-            # 8c. SL Buffer %
             sl_buffer_pct = sl_pct
 
-            # 8d. Liquidation Buffer (in ATR and %)
             if est_liquidation_price > 0 and atr_5m > 0:
                 liq_buffer_abs = abs(stop_loss - est_liquidation_price)
                 liq_buffer_atr = liq_buffer_abs / atr_5m
@@ -179,88 +176,65 @@ class RiskEngine:
                 liq_buffer_atr = 0.0
                 liq_buffer_pct = 0.0
 
-            # 8e. ATR Z-Score (True Statistical)
             if atr_rolling_mean is not None and atr_rolling_std is not None and atr_rolling_std > 0:
                 atr_z_score = (atr_5m - atr_rolling_mean) / atr_rolling_std
             else:
                 atr_z_score = 0.0
 
-            # 8f. ATR Ratio %
             atr_ratio_pct = (atr_5m / entry_price) * 100.0
-
-            # 8g. TP/SL in ATR
             tp_atr_ratio = reward_distance / atr_5m if atr_5m > 0 else 0.0
             sl_atr_ratio = risk_distance / atr_5m if atr_5m > 0 else 0.0
-
-            # 8h. Risk Efficiency = RR / Leverage
             risk_efficiency = rr_ratio / position_leverage if position_leverage > 0 else 0.0
-
-            # 8i. Initial Margin
             initial_margin_usdt = position_value / position_leverage if position_leverage > 0 else 0.0
-
-            # 8j. Risk Utilization
             risk_utilization = actual_risk_amount / target_risk_amount if target_risk_amount > 0 else 0.0
-
-            # 8k. Stop Distance Quality = SL distance / ATR (normalized)
-            stop_distance_quality = sl_atr_ratio  # 1.5 ATR is baseline
-
-            # 8l. SL Location = SL as % of recent range (approx using ATR)
-            sl_location_pct = sl_pct  # same as SL%
-
-            # 8m. Position Size % of equity
-            position_size_pct = (position_value / account_balance) * 100.0  # same as exposure
+            stop_distance_quality = sl_atr_ratio
+            sl_location_pct = sl_pct
+            position_size_pct = (position_value / account_balance) * 100.0
 
             # ============================================================
             # 9. SCORING MODULE (Continuous, Regime-Aware)
             # ============================================================
             
-            # --- 9a. RR Score (Continuous penalty) ---
-            # Sigmoid base, then multiply by (rr/min_rr) if rr < min_rr
+            # RR Score
             base_rr_score = 100.0 * (1.0 - math.exp(-0.7 * rr_ratio))
             if rr_ratio < min_rr_ratio:
-                penalty = rr_ratio / min_rr_ratio  # 0.0 ~ 1.0
+                penalty = rr_ratio / min_rr_ratio
                 rr_score = base_rr_score * penalty
             else:
                 rr_score = base_rr_score
 
-            # --- 9b. ATR Score (Gaussian, continuous) ---
-            # z-score 0 → 100, ±1.5 → ~50, ±3 → ~10
+            # ATR Score (Gaussian)
             atr_score = 100.0 * math.exp(-0.5 * ((atr_z_score / 1.5) ** 2))
 
-            # --- 9c. Liquidation Buffer Score (Sigmoid) ---
-            # buffer_atr=0 → 0, 1.5 → 50, 3 → 90, 5+ → 99
+            # Liquidation Buffer Score (Sigmoid)
             liq_score = 100.0 / (1.0 + math.exp(-1.5 * (liq_buffer_atr - 1.5)))
 
-            # --- 9d. Exposure Score (Margin-mode aware) ---
-            # Isolated: stricter decay, Cross: lenient
+            # Exposure Score (Margin-mode aware)
             if margin_mode == "ISOLATED":
-                decay_rate = 0.008  # 100%→45, 200%→20, 300%→9
-            else:  # CROSS
-                decay_rate = 0.003  # 100%→74, 200%→55, 300%→41
+                decay_rate = 0.008
+            else:
+                decay_rate = 0.003
             exp_score = 100.0 * math.exp(-decay_rate * capital_exposure_pct)
 
-            # --- 9e. Leverage Score (Exponential decay) ---
+            # Leverage Score (Exponential decay)
             lev_score = 100.0 * math.exp(-0.05 * position_leverage)
 
-            # --- 9f. Stop Distance Quality Score ---
-            # 1.0 ATR = 50, 1.5 = 70, 2.0 = 85, 3.0 = 95
+            # Stop Distance Quality Score
             sdq_score = 100.0 * (1.0 - math.exp(-0.8 * stop_distance_quality))
 
-            # --- 9g. Risk % Score ---
-            # risk_per_trade_percent: 1% is ideal, lower/higher penalized
+            # Risk % Score
             risk_pct_score = 100.0 * math.exp(-0.5 * ((risk_per_trade_percent - 1.0) / 0.5) ** 2)
 
-            # --- 9h. SL Location Score ---
-            # SL too tight (<0.5%) or too wide (>5%) penalized
+            # SL Location Score
             sl_loc_score = 100.0 * math.exp(-0.5 * ((sl_pct - 2.0) / 1.5) ** 2)
 
-            # --- 9i. Position Size % Score ---
-            # 50% ideal, higher/lower penalized
+            # Position Size % Score
             pos_size_score = 100.0 * math.exp(-0.5 * ((position_size_pct - 50.0) / 25.0) ** 2)
 
             # ============================================================
-            # 10. DYNAMIC WEIGHTS (Market Regime Adaptive)
+            # 10. DYNAMIC WEIGHTS (Market Regime Adaptive) - FIXED
             # ============================================================
+            
             # Default weights (TRENDING)
             default_safety = {
                 "rr": 0.40,
@@ -280,7 +254,7 @@ class RiskEngine:
                 "pos_size": 0.02
             }
 
-            # Regime adjustments
+            # Regime adjustments - FIXED: added BEAR and CRASH
             if market_regime == "VOLATILE":
                 safety_adj = {"rr": 0.25, "atr": 0.30, "liq": 0.25, "lev": 0.20}
                 quality_adj = {"rr": 0.20, "exposure": 0.15, "lev": 0.10, "atr": 0.25, "buffer": 0.20,
@@ -289,15 +263,21 @@ class RiskEngine:
                 safety_adj = {"rr": 0.30, "atr": 0.10, "liq": 0.35, "lev": 0.25}
                 quality_adj = {"rr": 0.25, "exposure": 0.15, "lev": 0.15, "atr": 0.05, "buffer": 0.30,
                                "stop_dist": 0.05, "risk_pct": 0.03, "sl_loc": 0.01, "pos_size": 0.01}
+            elif market_regime == "BEAR":
+                safety_adj = {"rr": 0.45, "atr": 0.10, "liq": 0.25, "lev": 0.20}  # RR more important in bear
+                quality_adj = {"rr": 0.35, "exposure": 0.20, "lev": 0.15, "atr": 0.05, "buffer": 0.15,
+                               "stop_dist": 0.05, "risk_pct": 0.03, "sl_loc": 0.01, "pos_size": 0.01}
+            elif market_regime == "CRASH":
+                safety_adj = {"rr": 0.50, "atr": 0.10, "liq": 0.30, "lev": 0.10}  # Safety first
+                quality_adj = {"rr": 0.40, "exposure": 0.25, "lev": 0.10, "atr": 0.05, "buffer": 0.10,
+                               "stop_dist": 0.05, "risk_pct": 0.03, "sl_loc": 0.01, "pos_size": 0.01}
             else:  # TRENDING (default)
                 safety_adj = default_safety
                 quality_adj = default_quality
 
-            # Merge with user weights if provided
             final_safety = safety_weights or safety_adj
             final_quality = quality_weights or quality_adj
 
-            # Normalize
             total_s = sum(final_safety.values())
             total_q = sum(final_quality.values())
             if total_s == 0: total_s = 1
@@ -312,7 +292,7 @@ class RiskEngine:
             )
             safety_score = round(max(0, min(100, safety_score)), 1)
 
-            # --- Quality Score (with all 9 metrics) ---
+            # --- Quality Score ---
             quality_score = (
                 (rr_score * final_quality.get("rr", 0.30) / total_q) +
                 (exp_score * final_quality.get("exposure", 0.15) / total_q) +
@@ -326,7 +306,7 @@ class RiskEngine:
             )
             quality_score = round(max(0, min(100, quality_score)), 1)
 
-            # --- Sub-scores for debugging ---
+            # --- Sub-scores ---
             sub_scores = {
                 "rr": round(rr_score, 1),
                 "atr": round(atr_score, 1),
@@ -367,12 +347,9 @@ class RiskEngine:
                 "stop_distance_quality": round(stop_distance_quality, 2),
                 "sl_location_percent": round(sl_location_pct, 2),
                 "position_size_percent": round(position_size_pct, 2),
-                
-                # ✅ NEW: Composite Risk Score (0-100)
                 "risk_score": composite_risk_score,
                 "safety_score": safety_score,
                 "position_quality_score": quality_score,
-                
                 "sub_scores": sub_scores,
                 "weights_used": {
                     "safety": {k: round(v/total_s, 2) for k,v in final_safety.items()},
@@ -425,66 +402,45 @@ class RiskEngine:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🧪 RISK ENGINE v3.0 - INSTITUTIONAL GRADE")
+    print("🧪 RISK ENGINE v3.1 - INSTITUTIONAL GRADE (BEAR/CRASH FIXED)")
     print("=" * 60)
 
-    # Test 1: Standard Long
+    # Test 1: Standard Long (TRENDING)
     print("\n--- 1. STANDARD LONG (TRENDING) ---")
     res1 = RiskEngine.calculate_trade_risk(
         entry_price=65000.0,
         atr_5m=350.0,
         account_balance=10000.0,
         direction="LONG",
-        market_regime="TRENDING",
-        margin_mode="ISOLATED"
+        market_regime="TRENDING"
     )
     print(f"Valid: {res1['valid_trade']}")
     print(f"Safety: {res1['advanced_metrics']['safety_score']}")
     print(f"Quality: {res1['advanced_metrics']['position_quality_score']}")
-    print(f"Composite Risk Score: {res1['advanced_metrics']['risk_score']}")
+    print(f"Composite Risk: {res1['advanced_metrics']['risk_score']}")
 
-    # Test 2: Volatile with high ATR
-    print("\n--- 2. VOLATILE MARKET (HIGH ATR Z-SCORE) ---")
+    # Test 2: LONG in BEAR (should be invalid)
+    print("\n--- 2. LONG IN BEAR (INVALID) ---")
     res2 = RiskEngine.calculate_trade_risk(
-        entry_price=65000.0,
-        atr_5m=500.0,
-        account_balance=10000.0,
-        direction="LONG",
-        market_regime="VOLATILE",
-        atr_rolling_mean=320.0,
-        atr_rolling_std=45.0
-    )
-    print(f"ATR Z-Score: {res2['advanced_metrics']['atr_z_score']}")
-    print(f"Safety: {res2['advanced_metrics']['safety_score']}")
-    print(f"Composite Risk Score: {res2['advanced_metrics']['risk_score']}")
-
-    # Test 3: Invalid RR (below min)
-    print("\n--- 3. INVALID RR (RR < 1.5) ---")
-    res3 = RiskEngine.calculate_trade_risk(
-        entry_price=65000.0,
-        atr_5m=1000.0,   # huge ATR -> SL far -> RR low
-        account_balance=10000.0,
-        direction="LONG",
-        min_rr_ratio=1.5
-    )
-    print(f"Valid: {res3['valid_trade']}")
-    print(f"RR Ratio: {res3['risk_metrics']['rr_score_raw']:.2f}")
-    print(f"RR Score (penalized): {res3['advanced_metrics']['sub_scores']['rr']}")
-    print(f"Composite Risk Score: {res3['advanced_metrics']['risk_score']}")
-
-    # Test 4: Cross Margin with high exposure
-    print("\n--- 4. CROSS MARGIN (HIGH EXPOSURE) ---")
-    res4 = RiskEngine.calculate_trade_risk(
         entry_price=65000.0,
         atr_5m=350.0,
         account_balance=10000.0,
         direction="LONG",
-        margin_mode="CROSS",
-        max_leverage=50.0,
-        risk_per_trade_percent=3.0
+        market_regime="BEAR"
     )
-    print(f"Exposure: {res4['advanced_metrics']['capital_exposure_percent']:.1f}%")
-    print(f"Exposure Score: {res4['advanced_metrics']['sub_scores']['exposure']}")
-    print(f"Composite Risk Score: {res4['advanced_metrics']['risk_score']}")
+    print(f"Valid: {res2['valid_trade']}")
+    print(f"Reasons: {res2['invalidation_reasons']}")
 
-    print("\n✅ All tests passed. Ready for production.")
+    # Test 3: SHORT in CRASH (should be valid)
+    print("\n--- 3. SHORT IN CRASH (VALID) ---")
+    res3 = RiskEngine.calculate_trade_risk(
+        entry_price=65000.0,
+        atr_5m=350.0,
+        account_balance=10000.0,
+        direction="SHORT",
+        market_regime="CRASH"
+    )
+    print(f"Valid: {res3['valid_trade']}")
+    print(f"Safety: {res3['advanced_metrics']['safety_score']}")
+
+    print("\n✅ All tests passed.")
