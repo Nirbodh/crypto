@@ -28,7 +28,6 @@ LEVERAGED_SUFFIXES = ("UP", "DOWN", "3L", "3S", "5L", "5S", "BULL", "BEAR", "100
 EXCHANGE_WEIGHTS = {
     "binance": 5,
     "bybit": 5,
-    "bitget": 4,
     "mexc": 3,
     "kucoin": 4,
     "coinbase": 5
