@@ -95,7 +95,7 @@ class CoinUniverseEngine:
         """
         logging.info(f"🌐 Building Institutional Universe (Min Vol: ${min_volume_usdt:,.0f})...")
         
-        cmc_ranks = self.fetch_cmc_top_rankings(limit=500)
+        cmc_ranks = self.fetch_cmc_top_rankings(limit=200)
         
         symbol_weights: Dict[str, int] = {}
         symbol_max_volumes: Dict[str, float] = {}
