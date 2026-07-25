@@ -127,7 +127,7 @@ class QuantTradingOrchestrator:
             qty = round(pos_val / current_price, 4)
 
             # ================================================================
-            # ✅ 5. RISK ENGINE INTEGRATION (FIXED)
+            # ✅ 5. RISK ENGINE INTEGRATION (UPDATED with ATR rolling stats)
             # ================================================================
             # Determine direction
             h1_bias = h1_smc_res.get("bias", "NEUTRAL")
@@ -140,13 +140,23 @@ class QuantTradingOrchestrator:
             else:
                 direction = "LONG"  # default
 
+            # 🔥 NEW: Calculate rolling ATR mean & std (so ATR Z-score works)
+            df_atr = df_15m.copy()
+            # Use 14-period ATR (or whatever is available)
+            atr_series = df_atr['high'] - df_atr['low']
+            atr_series = atr_series.rolling(14).mean().fillna(atr_val)
+            atr_rolling_mean = float(atr_series.iloc[-20:].mean()) if len(atr_series) >= 20 else atr_val
+            atr_rolling_std = float(atr_series.iloc[-20:].std()) if len(atr_series) >= 20 else atr_val * 0.1
+
             risk_res = RiskEngine.calculate_trade_risk(
                 entry_price=current_price,
                 atr_5m=atr_val,
                 custom_sl_price=sl_price,
                 direction=direction,
                 account_balance=account_balance,
-                market_regime=btc_context.get("market_regime", "TRENDING")
+                market_regime=btc_context.get("market_regime", "TRENDING"),
+                atr_rolling_mean=atr_rolling_mean,   # ✅ NEW
+                atr_rolling_std=atr_rolling_std      # ✅ NEW
             )
             logging.debug(f"📊 RiskEngine result for {symbol}: {risk_res}")
 
@@ -156,7 +166,7 @@ class QuantTradingOrchestrator:
                 return {"symbol": symbol, "status": "RISK_REJECTED"}
 
             # ================================================================
-            # 6. Unified Score Fusion Execution (with Risk Score) - FIXED
+            # 6. Unified Score Fusion Execution (with Risk Score & Dynamic Win Rate)
             # ================================================================
             tech_flags = tech_res.get("red_flags", {})
             if isinstance(tech_flags, dict):
@@ -175,24 +185,40 @@ class QuantTradingOrchestrator:
             
             red_flags = tech_flags + fund_flags
 
-            # ✅ Extract risk metrics correctly (now risk_score exists in advanced_metrics)
+            # ✅ Extract risk metrics (now risk_score exists in advanced_metrics)
             adv = risk_res.get("advanced_metrics", {})
-            risk_score = adv.get("risk_score", 50.0)          # Composite risk score (now available)
+            risk_score = adv.get("risk_score", 50.0)          # Composite risk score
             safety_score = adv.get("safety_score", 50.0)
             position_quality_score = adv.get("position_quality_score", 50.0)
 
-            # ✅ Use calculated RR from RiskEngine instead of hardcoded 2.5
+            # ✅ Use calculated RR from RiskEngine (instead of hardcoded 2.5)
             rr_ratio_raw = risk_res.get("risk_metrics", {}).get("rr_score_raw", 2.0)
-            # rr_score_raw is the actual numeric RR (e.g., 1.5, 2.8, etc.)
-            # If it's less than 1.0, cap it to 1.0 to avoid negative EV
             effective_rr = max(1.0, float(rr_ratio_raw))
+
+            # 🔥 NEW: Dynamic Estimated Win Rate (Problem 2 fix)
+            # Blend: Tech (40%) + SMC (30%) + MTF (20%) + Liquidity (10%)
+            tech_score_val = tech_res.get("technical_score", 50.0)
+            smc_score_val = h1_smc_res.get("smc_score", 50.0)
+            mtf_score_val = mtf_res.get("mtf_score", 50.0)
+            liq_score_val = daily_liq_res.get("liquidity_score", 50.0)
+            
+            # Normalize to 0.3 - 0.75 range (minimum 30% win rate, max 75%)
+            composite_win_rate = (
+                (tech_score_val / 100.0) * 0.40 +
+                (smc_score_val / 100.0) * 0.30 +
+                (mtf_score_val / 100.0) * 0.20 +
+                (liq_score_val / 100.0) * 0.10
+            )
+            # Scale to 30% - 75%
+            estimated_win_rate = 0.30 + (composite_win_rate * 0.45)
+            estimated_win_rate = round(max(0.30, min(0.75, estimated_win_rate)), 3)
 
             fusion_res = InstitutionalScoreFusionEngine.fuse_scores(
                 symbol=symbol,
-                tech_score=tech_res.get("technical_score", 50.0),
-                smc_score=h1_smc_res.get("smc_score", 50.0),
-                liquidity_score=daily_liq_res.get("liquidity_score", 50.0),
-                mtf_score=mtf_res.get("mtf_score", 50.0),
+                tech_score=tech_score_val,
+                smc_score=smc_score_val,
+                liquidity_score=liq_score_val,
+                mtf_score=mtf_score_val,
                 derivatives_score=deriv_res.get("derivatives_score", 50.0),
                 fundamental_score=fund_res.get("fundamental_score", 50.0),
                 sentiment_score=sentiment_score,
@@ -204,8 +230,8 @@ class QuantTradingOrchestrator:
                 position_quality_score=position_quality_score,
                 effective_leverage=risk_res.get("effective_leverage", 1.0),
                 capital_exposure_pct=risk_res.get("position_size_percent", 50.0),
-                estimated_win_rate=0.65,
-                rr_ratio=effective_rr,           # ✅ Using calculated RR
+                estimated_win_rate=estimated_win_rate,   # ✅ DYNAMIC
+                rr_ratio=effective_rr,                   # ✅ DYNAMIC (from RiskEngine)
                 btc_regime_bullish=btc_context["btc_regime_bullish"],
                 market_volatility_high=btc_context["market_volatility_high"],
                 red_flags=red_flags
@@ -217,13 +243,14 @@ class QuantTradingOrchestrator:
             # ✅ Log component scores for debugging
             logging.info(
                 f"📊 {symbol} Component Scores: "
-                f"Tech={tech_res.get('technical_score', 50):.1f}, "
-                f"SMC={h1_smc_res.get('smc_score', 50):.1f}, "
-                f"Liq={daily_liq_res.get('liquidity_score', 50):.1f}, "
-                f"MTF={mtf_res.get('mtf_score', 50):.1f}, "
+                f"Tech={tech_score_val:.1f}, "
+                f"SMC={smc_score_val:.1f}, "
+                f"Liq={liq_score_val:.1f}, "
+                f"MTF={mtf_score_val:.1f}, "
                 f"Deriv={deriv_res.get('derivatives_score', 50):.1f}, "
                 f"Fund={fund_res.get('fundamental_score', 50):.1f}, "
                 f"Risk={risk_score:.1f}, "
+                f"WinRate={estimated_win_rate:.1%}, "
                 f"RR={effective_rr:.2f}, "
                 f"Final={fusion_res['unified_score']:.1f}"
             )
@@ -322,7 +349,7 @@ class QuantTradingOrchestrator:
                     "price": asset["current_price"],
                     "gatekeeper_passed": fusion_res['is_passed'],
                     "unified_score": fusion_res['unified_score'],
-                    "ev_r": fusion_res.get("net_ev_r", 0.0),   # ✅ FIX: net_ev_r instead of ev_r
+                    "ev_r": fusion_res.get("net_ev_r", 0.0),   # ✅ FIXED: net_ev_r
                     "technical": asset["tech_res"],
                     "smc": asset["h1_smc_res"],
                     "derivatives": asset["deriv_res"],
@@ -356,7 +383,7 @@ class QuantTradingOrchestrator:
                         decision=ai_decision,
                         confidence=ai_confidence,
                         score=fusion_res['unified_score'],
-                        ev_r=fusion_res.get("net_ev_r", 0.0),   # ✅ FIX: net_ev_r
+                        ev_r=fusion_res.get("net_ev_r", 0.0),   # ✅ FIXED: net_ev_r
                         entry=asset["current_price"],
                         sl=asset["sl_price"],
                         tp=asset["tp_price"],
