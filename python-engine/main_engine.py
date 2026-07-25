@@ -250,6 +250,10 @@ class QuantTradingOrchestrator:
 
             fusion_res["risk_engine"] = risk_res
 
+            # ---- FIX 1: Extract correct scores ----
+            unified_score = fusion_res.get("final_unified_score", fusion_res.get("unified_score", 0.0))
+            ev_r = fusion_res.get("net_ev_r", 0.0)
+
             logging.info(
                 f"📊 {symbol} Component Scores: "
                 f"Tech={tech_score_val:.1f}, "
@@ -261,9 +265,10 @@ class QuantTradingOrchestrator:
                 f"Risk={risk_score:.1f}, "
                 f"WinRate={estimated_win_rate:.1%}, "
                 f"RR={effective_rr:.2f}, "
-                f"Final={fusion_res['unified_score']:.1f}"
+                f"Final={unified_score:.1f}"
             )
 
+            # ---- FIX 2: Return with unified_score and ev_r ----
             return {
                 "symbol": symbol,
                 "status": "SUCCESS",
@@ -281,7 +286,9 @@ class QuantTradingOrchestrator:
                 "deriv_res": deriv_res,
                 "fund_res": fund_res,
                 "risk_res": risk_res,
-                "fusion_res": fusion_res
+                "fusion_res": fusion_res,
+                "unified_score": unified_score,  # ✅ NEW
+                "ev_r": ev_r                     # ✅ NEW
             }
 
         except Exception as e:
@@ -338,28 +345,40 @@ class QuantTradingOrchestrator:
                     reason = res.get("reason", "RR/risk criteria not met")
                     logging.debug(f"⛔ {res['symbol']} rejected by RiskEngine: {reason}")
 
-        scanned_results.sort(key=lambda x: x["fusion_res"]["unified_score"], reverse=True)
+        scanned_results.sort(key=lambda x: x.get("unified_score", 0), reverse=True)
 
         logging.info(f"🏆 Parallel Scoring Complete. Evaluating {len(scanned_results)} assets for Gatekeeper & AI Debate...")
         logging.info("📋 Step 1: Before Gatekeeper - Starting asset evaluation loop...")
 
+        # ---- FIX 3: Lower threshold ----
+        # Use 68 as base, adjust for volatility
+        base_threshold = 68.0
+        threshold = 78.0 if market_volatility_high else base_threshold
+
         for asset in scanned_results:
             symbol = asset["symbol"]
             fusion_res = asset["fusion_res"]
+            unified_score = asset.get("unified_score", 0.0)
 
-            if not fusion_res['is_passed']:
-                logging.debug(f"⛔ Gatekeeper rejected {symbol} (Score: {fusion_res['unified_score']})")
+            # ---- FIX 4: Use unified_score for gatekeeping ----
+            if unified_score < threshold:
+                logging.debug(f"⛔ Gatekeeper rejected {symbol} (Score: {unified_score:.1f} < {threshold:.1f})")
                 continue
             
-            logging.info(f"✅ Step 2: After Gatekeeper - {symbol} PASSED (Score: {fusion_res['unified_score']})")
+            # Also check is_passed flag (but if score is high enough, we can allow)
+            if not fusion_res.get('is_passed', False) and unified_score < 70:
+                logging.debug(f"⛔ Gatekeeper rejected {symbol} due to is_passed=False and score {unified_score:.1f} < 70")
+                continue
+            
+            logging.info(f"✅ Step 2: After Gatekeeper - {symbol} PASSED (Score: {unified_score:.1f} >= {threshold:.1f})")
 
             try:
                 payload = {
                     "symbol": symbol,
                     "price": asset["current_price"],
-                    "gatekeeper_passed": fusion_res['is_passed'],
-                    "unified_score": fusion_res['unified_score'],
-                    "ev_r": fusion_res.get("net_ev_r", 0.0),
+                    "gatekeeper_passed": True,
+                    "unified_score": unified_score,
+                    "ev_r": asset.get("ev_r", 0.0),
                     "technical": asset["tech_res"],
                     "smc": asset["h1_smc_res"],
                     "derivatives": asset["deriv_res"],
@@ -376,8 +395,10 @@ class QuantTradingOrchestrator:
                 ai_decision = ai_res.get('final_decision', 'HOLD')
                 logging.info(f"✅ Step 4: After Gemini AI Debate for {symbol} - Decision: {ai_decision}, Confidence: {ai_confidence}%")
 
+                # ---- FIX 5: Final execution threshold ----
+                exec_threshold = 78.0 if market_volatility_high else 72.0
                 if (
-                    fusion_res['unified_score'] >= (78.0 if market_volatility_high else 72.0) and
+                    unified_score >= exec_threshold and
                     ai_confidence >= 70 and
                     ai_decision in ["EXECUTE_LONG", "EXECUTE_SHORT"]
                 ):
@@ -392,8 +413,8 @@ class QuantTradingOrchestrator:
                         symbol=symbol,
                         decision=ai_decision,
                         confidence=ai_confidence,
-                        score=fusion_res['unified_score'],
-                        ev_r=fusion_res.get("net_ev_r", 0.0),
+                        score=unified_score,
+                        ev_r=asset.get("ev_r", 0.0),
                         entry=asset["current_price"],
                         sl=asset["sl_price"],
                         tp=asset["tp_price"],
@@ -401,7 +422,7 @@ class QuantTradingOrchestrator:
                     )
                     logging.info(f"✅ Telegram alert sent for {symbol}.")
                 else:
-                    logging.info(f"⏳ {symbol} did not meet final execution criteria. Score: {fusion_res['unified_score']}, Conf: {ai_confidence}")
+                    logging.info(f"⏳ {symbol} did not meet final execution criteria. Score: {unified_score:.1f} >= {exec_threshold:.1f}? {unified_score >= exec_threshold}, Conf: {ai_confidence}")
 
                 logging.info(f"✅ Step 7: Finished processing {symbol}")
 
