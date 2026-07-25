@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
+from risk_engine import RiskEngine
 
 load_dotenv()
 
