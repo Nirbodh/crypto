@@ -239,14 +239,26 @@ class QuantTradingOrchestrator:
 
         logging.info(f"🏆 Parallel Scoring Complete. Evaluating {len(scanned_results)} assets for Gatekeeper & AI Debate...")
 
+        # ================================================================
+        # STEP-BY-STEP LOGGING FOR EACH ASSET
+        # ================================================================
         for asset in scanned_results:
             symbol = asset["symbol"]
             fusion_res = asset["fusion_res"]
 
+            # Step 1: Before Gatekeeper
+            logging.info(f"🔍 [{symbol}] Step 1: Before Gatekeeper (Score: {fusion_res['unified_score']:.2f})")
+
             if not fusion_res['is_passed']:
+                logging.info(f"🚫 [{symbol}] Step 1: Gatekeeper REJECTED (Score below threshold)")
                 continue
 
+            logging.info(f"✅ [{symbol}] Step 1: Gatekeeper PASSED")
+
             try:
+                # Step 2: After Gatekeeper (payload preparation)
+                logging.info(f"📦 [{symbol}] Step 2: Preparing payload for AI Debate")
+
                 payload = {
                     "symbol": symbol,
                     "price": asset["current_price"],
@@ -262,16 +274,31 @@ class QuantTradingOrchestrator:
                     }
                 }
 
+                # Step 3: Before Gemini AI
+                logging.info(f"🤖 [{symbol}] Step 3: Before Gemini AI Debate...")
+
                 ai_res = self.ai_engine.run_debate(payload)
                 ai_confidence = int(ai_res.get('confidence', 0))
                 ai_decision = ai_res.get('final_decision', 'HOLD')
+
+                # Step 4: After Gemini
+                logging.info(f"🧠 [{symbol}] Step 4: After Gemini → Decision: {ai_decision}, Confidence: {ai_confidence}%")
+
+                # Step 5: Before Database (check cooldown again)
+                logging.info(f"💾 [{symbol}] Step 5: Checking cooldown before saving...")
+                if self.is_duplicate_signal(symbol):
+                    logging.info(f"⏳ [{symbol}] Step 5: Duplicate signal (cooling down) – skipping")
+                    continue
+
+                # Step 6: Before Telegram (final signal check)
+                logging.info(f"📨 [{symbol}] Step 6: Before Telegram – verifying thresholds...")
 
                 if (
                     fusion_res['unified_score'] >= (78.0 if market_volatility_high else 72.0) and
                     ai_confidence >= 70 and
                     ai_decision in ["EXECUTE_LONG", "EXECUTE_SHORT"]
                 ):
-                    logging.info(f"🚀 HIGH CONVICTION SIGNAL! Dispatching Alert for {symbol}...")
+                    logging.info(f"🚀 [{symbol}] Step 6: SIGNAL TRIGGERED! Sending to Telegram...")
                     self.telegram.send_trade_signal(
                         symbol=symbol,
                         decision=ai_decision,
@@ -283,14 +310,26 @@ class QuantTradingOrchestrator:
                         tp=asset["tp_price"],
                         summary=ai_res.get('summary', 'High conviction trade detected.')
                     )
-                    self.db.save_trade_signal(payload=payload, ai_verdict=ai_res)
 
-            except Exception:
+                    # Step 7: Save to Database
+                    logging.info(f"💾 [{symbol}] Step 7: Saving signal to Database...")
+                    self.db.save_trade_signal(payload=payload, ai_verdict=ai_res)
+                    logging.info(f"✅ [{symbol}] Step 7: Finished (signal saved & sent)")
+                else:
+                    # 조건 미충족 시 로깅
+                    reason = []
+                    if fusion_res['unified_score'] < (78.0 if market_volatility_high else 72.0):
+                        reason.append(f"score {fusion_res['unified_score']:.2f} < threshold")
+                    if ai_confidence < 70:
+                        reason.append(f"AI confidence {ai_confidence}% < 70%")
+                    if ai_decision not in ["EXECUTE_LONG", "EXECUTE_SHORT"]:
+                        reason.append(f"AI decision '{ai_decision}' not executable")
+                    logging.info(f"⏭️ [{symbol}] Step 6-7: Skipped – {'; '.join(reason)}")
+
+            except Exception as e:
                 logging.exception(f"⚠️ Error processing asset {symbol} in worker thread")
-                return {
-                    "symbol": symbol,
-                    "status": "ERROR"
-                }
+                # Continue with next asset, don't stop whole loop
+                continue
 
     def run_forever(self, scan_limit: int = 15, poll_interval_seconds: int = 300):
         while True:
