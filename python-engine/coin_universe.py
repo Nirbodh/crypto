@@ -45,7 +45,7 @@ class CoinUniverseEngine:
         self.cmc_api_key = cmc_api_key or os.getenv("COINMARKETCAP_API_KEY", "")
         self.coingecko_api_key = coingecko_api_key or os.getenv("COINGECKO_API_KEY", "")
 
-    def fetch_cmc_top_rankings(self, limit: int = 500) -> Set[str]:
+    def fetch_cmc_top_rankings(self, limit: int = 200) -> Set[str]:
         """Fetch Top Ranked Market Cap Coins from CoinMarketCap API (Top 500)."""
         if not self.cmc_api_key:
             logging.warning("⚠️ CoinMarketCap API key missing. Skipping CMC Rank Filter.")
@@ -84,7 +84,7 @@ class CoinUniverseEngine:
 
     def build_tradable_universe(
         self, 
-        max_universe_size: int = 50, 
+        max_universe_size: int = 20, 
         min_volume_usdt: float = 2_000_000, 
         min_exchange_weight: int = 6,
         **kwargs
