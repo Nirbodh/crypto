@@ -339,6 +339,15 @@ class RiskEngine:
                 "pos_size": round(pos_size_score, 1)
             }
 
+            # ============================================================
+            # 🔥 NEW: Composite Risk Score (for ScoreFusion)
+            # ============================================================
+            composite_risk_score = round(
+                safety_score * 0.60 +
+                quality_score * 0.40,
+                1
+            )
+
             # --- Assemble Advanced Metrics ---
             advanced = {
                 "reward_percent": round(reward_pct, 2),
@@ -358,8 +367,12 @@ class RiskEngine:
                 "stop_distance_quality": round(stop_distance_quality, 2),
                 "sl_location_percent": round(sl_location_pct, 2),
                 "position_size_percent": round(position_size_pct, 2),
+                
+                # ✅ NEW: Composite Risk Score (0-100)
+                "risk_score": composite_risk_score,
                 "safety_score": safety_score,
                 "position_quality_score": quality_score,
+                
                 "sub_scores": sub_scores,
                 "weights_used": {
                     "safety": {k: round(v/total_s, 2) for k,v in final_safety.items()},
@@ -428,6 +441,7 @@ if __name__ == "__main__":
     print(f"Valid: {res1['valid_trade']}")
     print(f"Safety: {res1['advanced_metrics']['safety_score']}")
     print(f"Quality: {res1['advanced_metrics']['position_quality_score']}")
+    print(f"Composite Risk Score: {res1['advanced_metrics']['risk_score']}")
 
     # Test 2: Volatile with high ATR
     print("\n--- 2. VOLATILE MARKET (HIGH ATR Z-SCORE) ---")
@@ -442,6 +456,7 @@ if __name__ == "__main__":
     )
     print(f"ATR Z-Score: {res2['advanced_metrics']['atr_z_score']}")
     print(f"Safety: {res2['advanced_metrics']['safety_score']}")
+    print(f"Composite Risk Score: {res2['advanced_metrics']['risk_score']}")
 
     # Test 3: Invalid RR (below min)
     print("\n--- 3. INVALID RR (RR < 1.5) ---")
@@ -455,6 +470,7 @@ if __name__ == "__main__":
     print(f"Valid: {res3['valid_trade']}")
     print(f"RR Ratio: {res3['risk_metrics']['rr_score_raw']:.2f}")
     print(f"RR Score (penalized): {res3['advanced_metrics']['sub_scores']['rr']}")
+    print(f"Composite Risk Score: {res3['advanced_metrics']['risk_score']}")
 
     # Test 4: Cross Margin with high exposure
     print("\n--- 4. CROSS MARGIN (HIGH EXPOSURE) ---")
@@ -469,5 +485,6 @@ if __name__ == "__main__":
     )
     print(f"Exposure: {res4['advanced_metrics']['capital_exposure_percent']:.1f}%")
     print(f"Exposure Score: {res4['advanced_metrics']['sub_scores']['exposure']}")
+    print(f"Composite Risk Score: {res4['advanced_metrics']['risk_score']}")
 
     print("\n✅ All tests passed. Ready for production.")
