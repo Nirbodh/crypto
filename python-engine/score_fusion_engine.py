@@ -227,11 +227,46 @@ class InstitutionalScoreFusionEngine:
             # Normalize to sum to 1.0
             total = sum(base_weights.values())
             weights = {k: v / total for k, v in base_weights.items()}
+
+            logging.info(
+                 f"""
+            =========== WEIGHTS ===========
+            {symbol}
+
+            Market Regime : {market_regime}
+            ATR Ratio     : {atr_ratio_pct:.2f}
+
+            Weights:
+            {weights}
+
+            ===============================
+            """
+            )
         
         # ============================================================
         # 3. BASE UNIFIED SCORE (with Risk Component)
         # ============================================================
         raw_unified_score = sum(all_scores[k] * weights[k] for k in weights)
+        ogging.info(
+           f"""
+        ====== WEIGHT CONTRIBUTION ======
+
+        {symbol}
+
+        Scores:
+        {all_scores}
+
+        Weights:
+        {weights}
+
+        Contribution:
+        { {k: round(all_scores[k] * weights[k], 2) for k in weights} }
+
+        Raw Score = {raw_unified_score:.2f}
+
+        ================================
+         """
+        )
         
         # ---- Volatility Penalty (continuous) ----
         vol_penalty = 0.0
