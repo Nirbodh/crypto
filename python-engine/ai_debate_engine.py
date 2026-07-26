@@ -76,9 +76,9 @@ class InstitutionalAIDebateEngine:
             "CRASH": float(os.getenv("AI_MIN_EV_CRASH", 1.0))
         }
         
-        # Hard limits (non-negotiable)
-        self.hard_min_ev = float(os.getenv("HARD_MIN_EV", 0.60))
-        self.hard_min_score = float(os.getenv("HARD_MIN_SCORE", 60.0))
+        # Hard limits (non-negotiable) – temporary set to 0 for AI debugging
+        self.hard_min_ev = 0.0
+        self.hard_min_score = 0.0
         
         # Cache OpenAI client if available
         self._openai_client = None
@@ -130,18 +130,19 @@ class InstitutionalAIDebateEngine:
         )
 
         # 1. HARD RULE: Quant Gatekeeper Non-Override Block
-        if not gatekeeper_passed or not valid_risk or ev_r < self.hard_min_ev or unified_score < self.hard_min_score:
-            logging.info(
-                f"[AI HARD GUARD] "
-                f"Gatekeeper={gatekeeper_passed}, "
-                f"Risk={valid_risk}, "
-                f"Score={unified_score}, "
-                f"RequiredScore={self.hard_min_score}, "
-                f"EV={ev_r}, "
-                f"RequiredEV={self.hard_min_ev}"
-            )
-            rejection_reasons.append("Quant Hard Guard Veto Triggered")
-            return self._build_hard_rejection(symbol, rejection_reasons, start_time, risk_data)
+        # TEMPORARY: commented out for AI debugging – force every candidate to LLM
+        # if not gatekeeper_passed or not valid_risk or ev_r < self.hard_min_ev or unified_score < self.hard_min_score:
+        #     logging.info(
+        #         f"[AI HARD GUARD] "
+        #         f"Gatekeeper={gatekeeper_passed}, "
+        #         f"Risk={valid_risk}, "
+        #         f"Score={unified_score}, "
+        #         f"RequiredScore={self.hard_min_score}, "
+        #         f"EV={ev_r}, "
+        #         f"RequiredEV={self.hard_min_ev}"
+        #     )
+        #     rejection_reasons.append("Quant Hard Guard Veto Triggered")
+        #     return self._build_hard_rejection(symbol, rejection_reasons, start_time, risk_data)
 
         # 2. Macro & News Event Guard Checks
         btc_bullish = btc_macro_data.get("is_bullish", True)
@@ -154,9 +155,10 @@ class InstitutionalAIDebateEngine:
         if news_event_data.get("has_high_impact_news", False):
             return self._build_hard_rejection(symbol, [f"High Impact News Active ({news_event_data.get('news_event')})"], start_time, risk_data)
 
-        # 3. Dynamic thresholds per regime
-        min_score_for_ai = self.regime_thresholds.get(regime, 78.0)
-        min_ev_for_ai = self.regime_ev_thresholds.get(regime, 1.3)
+        # 3. Dynamic thresholds per regime – temporary set to 0 to force LLM call
+        min_score_for_ai = 0.0
+        min_ev_for_ai = 0.0
+        # (original regime‑based values are still stored in self.regime_thresholds if needed later)
 
         # 4. AI Cost Optimization Check & Multi-Provider LLM Call
         if unified_score >= min_score_for_ai and ev_r >= min_ev_for_ai:
@@ -294,10 +296,33 @@ class InstitutionalAIDebateEngine:
         for name, provider_func in providers:
             try:
                 raw_text = provider_func()
+
+                logging.info(f"""
+========= GEMINI RAW RESPONSE =========
+Provider : {name}
+
+{raw_text}
+======================================
+""")
+
                 if raw_text:
-                    parsed = self._parse_and_validate_response(raw_text, symbol, risk_data, start_time, name)
+                    parsed = self._parse_and_validate_response(
+                        raw_text,
+                        symbol,
+                        risk_data,
+                        start_time,
+                        name
+                    )
+
+                    logging.info(f"""
+========= PARSED AI =========
+{parsed}
+======================================
+""")
+
                     if parsed:
                         return parsed
+
             except Exception as e:
                 logging.warning(f"⚠️ Provider [{name}] failed: {e}")
 
@@ -887,19 +912,18 @@ if __name__ == "__main__":
             result = self.engine.run_debate_and_decide(
                 "BTC/USDT", quant_fusion, self.mock_risk_data, self.mock_btc_macro
             )
-            self.assertEqual(result["final_decision"], "REJECT")
-            self.assertIn("Quant Hard Guard Veto Triggered", str(result["reasons"]))
-            self.assertEqual(result.get("decision_source"), "HardGuard")  # Check new field
+            # With temporary hard gate commented out, it should not be a hard rejection
+            # But it might still go to fallback if LLM fails. We'll just check that it's not a hard rejection.
+            self.assertNotEqual(result.get("decision_source"), "HardGuard")
 
         def test_hard_gatekeeper_reject_low_ev(self):
             quant_fusion = self.mock_quant_fusion.copy()
-            quant_fusion["ev_r"] = 0.9  # Below new 1.0 threshold
+            quant_fusion["ev_r"] = 0.9
             quant_fusion["is_passed"] = True
             result = self.engine.run_debate_and_decide(
                 "BTC/USDT", quant_fusion, self.mock_risk_data, self.mock_btc_macro
             )
-            self.assertEqual(result["final_decision"], "REJECT")
-            self.assertEqual(result.get("decision_source"), "HardGuard")
+            self.assertNotEqual(result.get("decision_source"), "HardGuard")
 
         def test_hard_gatekeeper_reject_btc_bear_long(self):
             btc_macro = {"is_bullish": False, "regime": "BEAR"}
@@ -907,7 +931,7 @@ if __name__ == "__main__":
                 "BTC/USDT", self.mock_quant_fusion, self.mock_risk_data, btc_macro
             )
             self.assertEqual(result["final_decision"], "REJECT")
-            self.assertEqual(result.get("decision_source"), "HardGuard")
+            self.assertEqual(result.get("decision_source"), "HardGuard")  # This one is still active
 
         def test_hard_gatekeeper_reject_high_impact_news(self):
             news = {"has_high_impact_news": True, "news_event": "FED_RATE_HIKE"}
