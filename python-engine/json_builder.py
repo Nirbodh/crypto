@@ -238,7 +238,6 @@ class JSONBuilder:
 
         # ---- 7. Calculate Total Score (0-100 normalized) ----
         raw_score = sum(score_breakdown.values()) - total_risk_penalty
-        # Normalize to 0-100
         institutional_score = max(0, min(100, (raw_score + 100) / 2))
 
         # ---- 8. Trend Score, SMC Score, Risk Score (separate) ----
@@ -342,7 +341,30 @@ class JSONBuilder:
             }
         }
 
-        # ---- 17. Assemble Final JSON ----
+        # ---- 17. Risk Management (for AI Debate Engine) ----
+        risk_management = {
+            "valid_trade": confidence >= 55 and institutional_score >= 50,
+            "direction": quant_summary["trade_direction"],
+            "trade_levels": {
+                "entry_price": round(latest_close, 4),
+                "stop_loss_price": trade_plan["stop_loss"],
+                "take_profit_price": trade_plan["tp1"],
+                "sl_percentage": round((abs(latest_close - trade_plan["stop_loss"]) / latest_close) * 100, 2),
+                "tp_percentage": round((abs(trade_plan["tp1"] - latest_close) / latest_close) * 100, 2)
+            },
+            "position_sizing": {
+                "quantity": risk_result.get("position_sizing", {}).get("quantity", 0.0),
+                "position_value_usdt": risk_result.get("position_sizing", {}).get("position_value_usdt", 0.0),
+                "effective_leverage_needed": risk_result.get("position_sizing", {}).get("effective_leverage_needed", 1.0)
+            },
+            "risk_metrics": {
+                "atr_5m": atr_val,
+                "risk_reward_ratio": f"1:{risk_result.get('risk_metrics', {}).get('rr_score_raw', 2.0)}",
+                "rr_score_raw": risk_result.get("risk_metrics", {}).get("rr_score_raw", 2.0)
+            }
+        }
+
+        # ---- 18. Assemble Final JSON ----
         scalper_payload: Dict[str, Any] = {
             "metadata": {
                 "symbol": symbol,
@@ -417,7 +439,8 @@ class JSONBuilder:
                 "score": round(institutional_score, 1)
             },
             "institutional_signals": institutional_signals,
-            "quant_summary": quant_summary
+            "quant_summary": quant_summary,
+            "risk_management": risk_management  # <-- ADDED for AI debate engine compatibility
         }
 
         # Clean NaN values
@@ -525,6 +548,7 @@ if __name__ == "__main__":
     print(f"✅ Entry Grade: {parsed['entry_quality']['grade']}")
     print(f"✅ Probabilities: Bull={parsed['probabilities']['bull']}%, Bear={parsed['probabilities']['bear']}%, Range={parsed['probabilities']['range']}%")
     print(f"✅ Score Breakdown: {json.dumps(parsed['score_breakdown'], indent=2)}")
+    print(f"✅ Risk Management (trade_levels): {json.dumps(parsed.get('risk_management', {}).get('trade_levels', {}), indent=2)}")
     print("=" * 70)
     print("✅ JSON built successfully. Full output saved to json_output.json")
 
