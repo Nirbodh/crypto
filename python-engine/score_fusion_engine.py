@@ -334,6 +334,21 @@ final_score={unified_score}
         if not direction_passed:
             unified_score = max(0, unified_score - direction_penalty)
             applied_penalties.append(f"Direction Mismatch: -{direction_penalty} pts")
+
+        # ---- NEW: SCORE BREAKDOWN LOG (after all penalties applied) ----
+        logging.info(
+            f"""
+========== SCORE BREAKDOWN ==========
+{symbol}
+Raw Score        : {raw_unified_score:.2f}
+Vol Penalty      : {vol_penalty:.2f}
+Flag Penalty     : {total_penalty:.2f}
+DirectionPenalty : {direction_penalty}
+Final Score      : {unified_score:.2f}
+AppliedPenalties : {applied_penalties}
+=====================================
+"""
+        )
         
         # ============================================================
         # 7. FINAL PASS / FAIL
