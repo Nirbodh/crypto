@@ -62,22 +62,22 @@ class InstitutionalAIDebateEngine:
         
         # Dynamic thresholds per regime (overridable by env)
         self.regime_thresholds = {
-            "TRENDING": float(os.getenv("AI_MIN_SCORE_TRENDING", 72.0)),
-            "RANGING": float(os.getenv("AI_MIN_SCORE_RANGING", 70.0)),
-            "VOLATILE": float(os.getenv("AI_MIN_SCORE_VOLATILE", 76.0)),
-            "BEAR": float(os.getenv("AI_MIN_SCORE_BEAR", 74.0)),
-            "CRASH": float(os.getenv("AI_MIN_SCORE_CRASH", 82.0))
+            "TRENDING": float(os.getenv("AI_MIN_SCORE_TRENDING", 60.0)),
+            "RANGING": float(os.getenv("AI_MIN_SCORE_RANGING", 62.0)),
+            "VOLATILE": float(os.getenv("AI_MIN_SCORE_VOLATILE", 64.0)),
+            "BEAR": float(os.getenv("AI_MIN_SCORE_BEAR", 66.0)),
+            "CRASH": float(os.getenv("AI_MIN_SCORE_CRASH", 70.0))
         }
         self.regime_ev_thresholds = {
-            "TRENDING": float(os.getenv("AI_MIN_EV_TRENDING", 1.15)),
-            "RANGING": float(os.getenv("AI_MIN_EV_RANGING", 1.10)),
-            "VOLATILE": float(os.getenv("AI_MIN_EV_VOLATILE", 1.30)),
-            "BEAR": float(os.getenv("AI_MIN_EV_BEAR", 1.25)),
-            "CRASH": float(os.getenv("AI_MIN_EV_CRASH", 1.5))
+            "TRENDING": float(os.getenv("AI_MIN_EV_TRENDING", 0.70)),
+            "RANGING": float(os.getenv("AI_MIN_EV_RANGING", 0.65)),
+            "VOLATILE": float(os.getenv("AI_MIN_EV_VOLATILE", 0.80)),
+            "BEAR": float(os.getenv("AI_MIN_EV_BEAR", 0.85)),
+            "CRASH": float(os.getenv("AI_MIN_EV_CRASH", 1.0))
         }
         
         # Hard limits (non-negotiable)
-        self.hard_min_ev = float(os.getenv("HARD_MIN_EV", 1.0))
+        self.hard_min_ev = float(os.getenv("HARD_MIN_EV", 0.60))
         self.hard_min_score = float(os.getenv("HARD_MIN_SCORE", 60.0))
         
         # Cache OpenAI client if available
