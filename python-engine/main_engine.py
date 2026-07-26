@@ -222,6 +222,24 @@ class QuantTradingOrchestrator:
                 (mtf_score_val / 100.0) * 0.20 +
                 (liq_score_val / 100.0) * 0.10
             )
+            logging.info(
+                f"""
+           ========== INPUT TO FUSION ==========
+           {symbol}
+           Tech      : {tech_score_val}
+           SMC       : {smc_score_val}
+           Liquidity : {liq_score_val}
+           MTF       : {mtf_score_val}
+           Deriv     : {deriv_res.get('derivatives_score', 50.0)}
+           Fund      : {fund_res.get('fundamental_score', 50.0)}
+           Risk      : {risk_score}
+           Session   : {session_score}
+           Sentiment : {sentiment_score}
+           FVG       : {fvg_mitigation_score}
+           =====================================
+           """
+           )
+
             estimated_win_rate = 0.30 + (composite_win_rate * 0.45)
             estimated_win_rate = round(max(0.30, min(0.75, estimated_win_rate)), 3)
 
