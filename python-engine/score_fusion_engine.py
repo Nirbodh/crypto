@@ -247,7 +247,7 @@ class InstitutionalScoreFusionEngine:
         # 3. BASE UNIFIED SCORE (with Risk Component)
         # ============================================================
         raw_unified_score = sum(all_scores[k] * weights[k] for k in weights)
-        ogging.info(
+        logging.info(
            f"""
         ====== WEIGHT CONTRIBUTION ======
 
