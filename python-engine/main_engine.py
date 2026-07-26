@@ -265,7 +265,18 @@ class QuantTradingOrchestrator:
                 market_volatility_high=btc_context["market_volatility_high"],
                 red_flags=red_flags
             )
-
+            logging.info(
+                f"""
+            ========== RED FLAGS ==========
+            {symbol}
+            Penalty Flags : {fusion_res.get("penalty_flags", [])}
+            Critical Flags: {fusion_res.get("critical_flags", [])}
+            Warnings      : {fusion_res.get("warning_messages", [])}
+            AppliedPenalty: {fusion_res.get("applied_penalties", [])}
+            ===============================
+            """
+            )
+            
             fusion_res["risk_engine"] = risk_res
 
             # Extract scores
