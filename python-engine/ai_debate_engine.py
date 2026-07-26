@@ -78,7 +78,7 @@ class InstitutionalAIDebateEngine:
         
         # Hard limits (non-negotiable)
         self.hard_min_ev = float(os.getenv("HARD_MIN_EV", 1.0))
-        self.hard_min_score = float(os.getenv("HARD_MIN_SCORE", 68.0))
+        self.hard_min_score = float(os.getenv("HARD_MIN_SCORE", 60.0))
         
         # Cache OpenAI client if available
         self._openai_client = None
