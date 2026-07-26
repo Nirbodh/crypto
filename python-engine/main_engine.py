@@ -352,8 +352,8 @@ class QuantTradingOrchestrator:
 
         # ---- FIX 3: Lower threshold ----
         # Use 68 as base, adjust for volatility
-        base_threshold = 66.0
-        threshold = 72.0 if market_volatility_high else base_threshold
+        base_threshold = 55.0
+        threshold = 60.0 if market_volatility_high else base_threshold
 
         for asset in scanned_results:
             symbol = asset["symbol"]
