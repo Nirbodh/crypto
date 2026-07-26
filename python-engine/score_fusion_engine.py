@@ -261,11 +261,11 @@ class InstitutionalScoreFusionEngine:
         # 4. DYNAMIC THRESHOLD (Regime-Based)
         # ============================================================
         threshold_map = {
-            "TRENDING": 72,
-            "RANGING": 75,
-            "VOLATILE": 80,
-            "BEAR": 78,
-            "CRASH": 85
+            "TRENDING": 68,
+            "RANGING": 70,
+            "VOLATILE": 74,
+            "BEAR": 74,
+            "CRASH": 80
         }
         pass_threshold = threshold_map.get(market_regime, 75)
         
