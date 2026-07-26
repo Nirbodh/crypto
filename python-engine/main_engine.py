@@ -352,8 +352,8 @@ class QuantTradingOrchestrator:
 
         # ---- FIX 3: Lower threshold ----
         # Use 68 as base, adjust for volatility
-        base_threshold = 68.0
-        threshold = 78.0 if market_volatility_high else base_threshold
+        base_threshold = 66.0
+        threshold = 72.0 if market_volatility_high else base_threshold
 
         for asset in scanned_results:
             symbol = asset["symbol"]
@@ -396,7 +396,7 @@ class QuantTradingOrchestrator:
                 logging.info(f"✅ Step 4: After Gemini AI Debate for {symbol} - Decision: {ai_decision}, Confidence: {ai_confidence}%")
 
                 # ---- FIX 5: Final execution threshold ----
-                exec_threshold = 78.0 if market_volatility_high else 72.0
+                exec_threshold = 72.0 if market_volatility_high else 68.0
                 if (
                     unified_score >= exec_threshold and
                     ai_confidence >= 70 and
