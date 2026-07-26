@@ -326,22 +326,43 @@ class InstitutionalScoreFusionEngine:
         is_passed = True
         all_reasons = rejection_reasons.copy()
         
+        # ---- DEBUG: Log full state before gates ----
+        logging.info(
+            f"""
+================ FUSION DEBUG ================
+{symbol}
+direction_passed={direction_passed}
+direction_penalty={direction_penalty}
+critical_flags={critical_flags}
+net_ev={net_ev}
+pass_threshold={pass_threshold}
+unified_score={unified_score}
+==============================================
+"""
+        )
+        
         # Hard Gate 1: Critical Flags
         if critical_flags:
+            logging.warning(f"{symbol} FAIL: critical_flags")
             is_passed = False
             all_reasons.extend([f"CRITICAL: {flag}" for flag in critical_flags])
         
         # Hard Gate 2: Direction (only if direction penalty > 10)
         if not direction_passed and direction_penalty > 10:
+            logging.warning(f"{symbol} FAIL: direction")
             is_passed = False
         
         # Hard Gate 3: Net EV < 0.5
         if net_ev < 0.5:
+            logging.warning(f"{symbol} FAIL: net_ev={net_ev}")
             is_passed = False
             all_reasons.append(f"Net EV too low: {net_ev:.2f} R < 0.5")
         
         # Hard Gate 4: Score < Dynamic Threshold
         if unified_score < pass_threshold:
+            logging.warning(
+                f"{symbol} FAIL: score {unified_score} threshold {pass_threshold}"
+            )
             is_passed = False
             all_reasons.append(f"Score {unified_score:.1f} < {pass_threshold} ({market_regime} threshold)")
         
