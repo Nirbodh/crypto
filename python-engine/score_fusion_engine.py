@@ -256,6 +256,21 @@ class InstitutionalScoreFusionEngine:
         
         unified_score = max(0, raw_unified_score - vol_penalty - total_penalty)
         unified_score = round(min(100, unified_score), 2)
+
+        # ---- RAW SCORE DEBUG ----
+        logging.info(
+            f"""
+RAW SCORE DEBUG
+{symbol}
+
+raw_unified_score={raw_unified_score}
+
+penalties={applied_penalties}
+
+final_score={unified_score}
+
+"""
+        )
         
         # ============================================================
         # 4. DYNAMIC THRESHOLD (Regime-Based)
