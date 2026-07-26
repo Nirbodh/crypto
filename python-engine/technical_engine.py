@@ -452,15 +452,12 @@ class TechnicalEngine:
         if res_4h and res_4h["rsi"] < 30 and res_15m["rsi"] < 30:
             red_flags["major"].append("OVERSOLD_MULTI_TF")
         
-        # ---- Temporary divergence debug ----
+        # ---- Temporary divergence debug (NO symbol variable) ----
         logging.info(
             f"""
 ========= DIVERGENCE DEBUG =========
-{symbol}  # Note: we need to get the symbol into this scope (see fix below)
-
 Bullish : {res_15m["divergence"]["bullish"]}
 Bearish : {res_15m["divergence"]["bearish"]}
-
 ====================================
 """
         )
