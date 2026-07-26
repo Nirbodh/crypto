@@ -429,6 +429,10 @@ class QuantTradingOrchestrator:
 
                 logging.info(f"🧠 Step 3: Before Gemini AI Debate for {symbol}...")
                 ai_res = self.ai_engine.run_debate(payload)
+                logging.info("=" * 60)
+                logging.info(f"AI RESULT = {ai_res}")
+                logging.info("=" * 60)
+                
                 ai_confidence = int(ai_res.get('confidence', 0))
                 ai_decision = ai_res.get('final_decision', 'HOLD')
                 logging.info(f"✅ Step 4: After Gemini AI Debate for {symbol} - Decision: {ai_decision}, Confidence: {ai_confidence}%")
