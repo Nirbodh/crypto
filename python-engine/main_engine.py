@@ -250,22 +250,28 @@ class QuantTradingOrchestrator:
 
             fusion_res["risk_engine"] = risk_res
 
-            # ---- FIX 1: Extract correct scores ----
+            # Extract scores
+            raw_score = fusion_res.get("raw_unified_score", 0.0)
             unified_score = fusion_res.get("final_unified_score", fusion_res.get("unified_score", 0.0))
             ev_r = fusion_res.get("net_ev_r", 0.0)
 
             logging.info(
-                f"📊 {symbol} Component Scores: "
-                f"Tech={tech_score_val:.1f}, "
-                f"SMC={smc_score_val:.1f}, "
-                f"Liq={liq_score_val:.1f}, "
-                f"MTF={mtf_score_val:.1f}, "
-                f"Deriv={deriv_res.get('derivatives_score', 50):.1f}, "
-                f"Fund={fund_res.get('fundamental_score', 50):.1f}, "
-                f"Risk={risk_score:.1f}, "
-                f"WinRate={estimated_win_rate:.1%}, "
-                f"RR={effective_rr:.2f}, "
-                f"Final={unified_score:.1f}"
+                f"📊 {symbol} | "
+                f"Tech={tech_score_val:.1f} | "
+                f"SMC={smc_score_val:.1f} | "
+                f"Liq={liq_score_val:.1f} | "
+                f"MTF={mtf_score_val:.1f} | "
+                f"Deriv={deriv_res.get('derivatives_score', 50):.1f} | "
+                f"Fund={fund_res.get('fundamental_score', 50):.1f} | "
+                f"Risk={risk_score:.1f} | "
+                f"WR={estimated_win_rate:.1%} | "
+                f"RR={effective_rr:.2f} | "
+                f"Raw={raw_score:.2f} | "
+                f"Final={unified_score:.2f} | "
+                f"EV={ev_r:.2f} | "
+                f"Passed={fusion_res.get('is_passed')} | "
+                f"Reasons={fusion_res.get('rejection_reasons', [])} | "
+                f"Penalties={fusion_res.get('applied_penalties', [])}"
             )
 
             # ---- FIX 2: Return with unified_score and ev_r ----
@@ -287,8 +293,8 @@ class QuantTradingOrchestrator:
                 "fund_res": fund_res,
                 "risk_res": risk_res,
                 "fusion_res": fusion_res,
-                "unified_score": unified_score,  # ✅ NEW
-                "ev_r": ev_r                     # ✅ NEW
+                "unified_score": unified_score,
+                "ev_r": ev_r
             }
 
         except Exception as e:
