@@ -434,10 +434,10 @@ class QuantTradingOrchestrator:
                 logging.info(f"✅ Step 4: After Gemini AI Debate for {symbol} - Decision: {ai_decision}, Confidence: {ai_confidence}%")
 
                 # ---- FIX 5: Final execution threshold ----
-                exec_threshold = 72.0 if market_volatility_high else 68.0
+                exec_threshold = 60.0 if market_volatility_high else 55.0
                 if (
                     unified_score >= exec_threshold and
-                    ai_confidence >= 70 and
+                    ai_confidence >= 50 and
                     ai_decision in ["EXECUTE_LONG", "EXECUTE_SHORT"]
                 ):
                     logging.info(f"🚀 HIGH CONVICTION SIGNAL for {symbol}! Dispatching...")
