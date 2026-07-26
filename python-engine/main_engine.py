@@ -295,7 +295,7 @@ class QuantTradingOrchestrator:
             logging.exception(f"⚠️ Error processing asset {symbol} in worker thread")
             return {"symbol": symbol, "status": "ERROR", "message": str(e)}
 
-    def scan_and_execute(self, max_universe_size: int = 20):
+    def scan_and_execute(self, max_universe_size: int = 30):
         target_coins = self.universe_engine.build_tradable_universe(
             min_volume_usdt=2_000_000,
             min_exchanges=2
@@ -430,7 +430,7 @@ class QuantTradingOrchestrator:
                 logging.exception(f"⚠️ Error processing asset {symbol} in main loop")
                 continue
 
-    def run_forever(self, scan_limit: int = 20, poll_interval_seconds: int = 300):
+    def run_forever(self, scan_limit: int = 30, poll_interval_seconds: int = 300):
         while True:
             try:
                 self.scan_and_execute(max_universe_size=scan_limit)
@@ -443,4 +443,4 @@ class QuantTradingOrchestrator:
 
 if __name__ == "__main__":
     orchestrator = QuantTradingOrchestrator()
-    orchestrator.run_forever(scan_limit=20, poll_interval_seconds=300)
+    orchestrator.run_forever(scan_limit=30, poll_interval_seconds=300)
