@@ -452,11 +452,24 @@ class TechnicalEngine:
         if res_4h and res_4h["rsi"] < 30 and res_15m["rsi"] < 30:
             red_flags["major"].append("OVERSOLD_MULTI_TF")
         
-        if res_15m["divergence"]["bearish"]:
-            red_flags["major"].append("BEARISH_DIVERGENCE")
+        # ---- Temporary divergence debug ----
+        logging.info(
+            f"""
+========= DIVERGENCE DEBUG =========
+{symbol}  # Note: we need to get the symbol into this scope (see fix below)
+
+Bullish : {res_15m["divergence"]["bullish"]}
+Bearish : {res_15m["divergence"]["bearish"]}
+
+====================================
+"""
+        )
+        # Comment out the original red flag appends for now
+        # if res_15m["divergence"]["bearish"]:
+        #     red_flags["major"].append("BEARISH_DIVERGENCE")
         
-        if res_15m["divergence"]["bullish"]:
-            red_flags["major"].append("BULLISH_DIVERGENCE")
+        # if res_15m["divergence"]["bullish"]:
+        #     red_flags["major"].append("BULLISH_DIVERGENCE")
         
         # ---- Step 9: Signals (Preserve order) ----
         # Use dict.fromkeys() to remove duplicates while preserving order
