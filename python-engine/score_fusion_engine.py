@@ -1,3 +1,5 @@
+# python-engine/score_fusion_engine.py
+
 import math
 import logging
 from typing import Dict, Any, List, Optional, Literal
@@ -227,46 +229,11 @@ class InstitutionalScoreFusionEngine:
             # Normalize to sum to 1.0
             total = sum(base_weights.values())
             weights = {k: v / total for k, v in base_weights.items()}
-
-            logging.info(
-                 f"""
-            =========== WEIGHTS ===========
-            {symbol}
-
-            Market Regime : {market_regime}
-            ATR Ratio     : {atr_ratio_pct:.2f}
-
-            Weights:
-            {weights}
-
-            ===============================
-            """
-            )
         
         # ============================================================
         # 3. BASE UNIFIED SCORE (with Risk Component)
         # ============================================================
         raw_unified_score = sum(all_scores[k] * weights[k] for k in weights)
-        logging.info(
-           f"""
-        ====== WEIGHT CONTRIBUTION ======
-
-        {symbol}
-
-        Scores:
-        {all_scores}
-
-        Weights:
-        {weights}
-
-        Contribution:
-        { {k: round(all_scores[k] * weights[k], 2) for k in weights} }
-
-        Raw Score = {raw_unified_score:.2f}
-
-        ================================
-         """
-        )
         
         # ---- Volatility Penalty (continuous) ----
         vol_penalty = 0.0
@@ -291,31 +258,16 @@ class InstitutionalScoreFusionEngine:
         
         unified_score = max(0, raw_unified_score - vol_penalty - total_penalty)
         unified_score = round(min(100, unified_score), 2)
-
-        # ---- RAW SCORE DEBUG ----
-        logging.info(
-            f"""
-RAW SCORE DEBUG
-{symbol}
-
-raw_unified_score={raw_unified_score}
-
-penalties={applied_penalties}
-
-final_score={unified_score}
-
-"""
-        )
         
         # ============================================================
         # 4. DYNAMIC THRESHOLD (Regime-Based)
         # ============================================================
         threshold_map = {
-            "TRENDING": 68,
-            "RANGING": 70,
-            "VOLATILE": 74,
-            "BEAR": 74,
-            "CRASH": 80
+            "TRENDING": 60,
+            "RANGING": 65,
+            "VOLATILE": 67,
+            "BEAR": 70,
+            "CRASH": 75
         }
         pass_threshold = threshold_map.get(market_regime, 75)
         
@@ -369,42 +321,12 @@ final_score={unified_score}
         if not direction_passed:
             unified_score = max(0, unified_score - direction_penalty)
             applied_penalties.append(f"Direction Mismatch: -{direction_penalty} pts")
-
-        # ---- NEW: SCORE BREAKDOWN LOG (after all penalties applied) ----
-        logging.info(
-            f"""
-========== SCORE BREAKDOWN ==========
-{symbol}
-Raw Score        : {raw_unified_score:.2f}
-Vol Penalty      : {vol_penalty:.2f}
-Flag Penalty     : {total_penalty:.2f}
-DirectionPenalty : {direction_penalty}
-Final Score      : {unified_score:.2f}
-AppliedPenalties : {applied_penalties}
-=====================================
-"""
-        )
         
         # ============================================================
         # 7. FINAL PASS / FAIL
         # ============================================================
         is_passed = True
         all_reasons = rejection_reasons.copy()
-        
-        # ---- DEBUG: Log full state before gates ----
-        logging.info(
-            f"""
-================ FUSION DEBUG ================
-{symbol}
-direction_passed={direction_passed}
-direction_penalty={direction_penalty}
-critical_flags={critical_flags}
-net_ev={net_ev}
-pass_threshold={pass_threshold}
-unified_score={unified_score}
-==============================================
-"""
-        )
         
         # Hard Gate 1: Critical Flags
         if critical_flags:
@@ -434,8 +356,6 @@ unified_score={unified_score}
         # ============================================================
         # 8. CONVICTION SCORE & FINAL GRADE (FIXED: removed risk double counting)
         # ============================================================
-        # 🔥 FIX: Conviction is now a blend of Unified Score (60%) and EV Score (40%)
-        # Risk is already embedded in unified_score via weighted average
         conviction_score = (
             unified_score * 0.60 +
             ev_score * 0.40
@@ -459,7 +379,6 @@ unified_score={unified_score}
         # ============================================================
         # 9. CONFIDENCE SCORE + LEVEL
         # ============================================================
-        # Consensus (std dev of components)
         component_list = list(all_scores.values())
         if component_list:
             mean_comp = sum(component_list) / len(component_list)
@@ -469,13 +388,9 @@ unified_score={unified_score}
         else:
             consensus_score = 50
         
-        # EV Clarity: distance from 0 EV
         ev_clarity = min(100, abs(net_ev) * 30)
-        
-        # Risk Alignment (use risk_score directly, no double counting)
         risk_align = risk_score
         
-        # Combined Confidence Score
         confidence_score = (
             consensus_score * 0.35 +
             ev_clarity * 0.30 +
@@ -484,7 +399,6 @@ unified_score={unified_score}
         )
         confidence_score = round(max(0, min(100, confidence_score)), 1)
         
-        # ---- Confidence Level ----
         if confidence_score >= 85:
             confidence_level = "HIGH"
         elif confidence_score >= 70:
