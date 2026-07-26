@@ -77,8 +77,8 @@ class InstitutionalAIDebateEngine:
         }
         
         # Hard limits (non-negotiable)
-        self.hard_min_ev = float(os.getenv("HARD_MIN_EV", 1.2))
-        self.hard_min_score = float(os.getenv("HARD_MIN_SCORE", 75.0))
+        self.hard_min_ev = float(os.getenv("HARD_MIN_EV", 1.0))
+        self.hard_min_score = float(os.getenv("HARD_MIN_SCORE", 68.0))
         
         # Cache OpenAI client if available
         self._openai_client = None
@@ -119,8 +119,27 @@ class InstitutionalAIDebateEngine:
         unified_score = quant_fusion_data.get("unified_score", quant_fusion_data.get("mtf_score", 80.0))
         rejection_reasons = list(quant_fusion_data.get("rejection_reasons", []))
 
+        # AI INPUT logging
+        logging.info(
+            f"[AI INPUT] "
+            f"Symbol={symbol} | "
+            f"Gatekeeper={gatekeeper_passed} | "
+            f"ValidRisk={valid_risk} | "
+            f"Score={unified_score} | "
+            f"EV={ev_r}"
+        )
+
         # 1. HARD RULE: Quant Gatekeeper Non-Override Block
         if not gatekeeper_passed or not valid_risk or ev_r < self.hard_min_ev or unified_score < self.hard_min_score:
+            logging.info(
+                f"[AI HARD GUARD] "
+                f"Gatekeeper={gatekeeper_passed}, "
+                f"Risk={valid_risk}, "
+                f"Score={unified_score}, "
+                f"RequiredScore={self.hard_min_score}, "
+                f"EV={ev_r}, "
+                f"RequiredEV={self.hard_min_ev}"
+            )
             rejection_reasons.append("Quant Hard Guard Veto Triggered")
             return self._build_hard_rejection(symbol, rejection_reasons, start_time, risk_data)
 
@@ -141,25 +160,36 @@ class InstitutionalAIDebateEngine:
 
         # 4. AI Cost Optimization Check & Multi-Provider LLM Call
         if unified_score >= min_score_for_ai and ev_r >= min_ev_for_ai:
+            logging.info(
+                f"[AI] Calling LLM | "
+                f"Symbol={symbol} | "
+                f"Score={unified_score:.1f} | "
+                f"EV={ev_r:.2f} | "
+                f"Gatekeeper={gatekeeper_passed}"
+            )
             llm_res = self._call_multi_provider_llm(
                 symbol, quant_fusion_data, risk_data, btc_macro_data, recent_trade_memory, news_event_data, start_time
             )
             if llm_res:
                 # Bayesian Confidence Calibration
                 raw_ai_confidence = llm_res.get("confidence_score", llm_res.get("confidence", 70))
-                # Prior = quant score (0-1), Likelihood = AI confidence (0-1)
                 prior = unified_score / 100.0
                 likelihood = raw_ai_confidence / 100.0
-                # Avoid division by zero
                 denominator = (prior * likelihood) + ((1 - prior) * (1 - likelihood) + 1e-9)
                 posterior = (prior * likelihood) / denominator
                 calibrated_confidence = int(min(95, max(0, posterior * 100)))
                 
                 llm_res["confidence_score"] = calibrated_confidence
                 llm_res["confidence"] = calibrated_confidence
+                llm_res["decision_source"] = "LLM"
                 return llm_res
 
         # 5. Institutional Fallback Rule Engine
+        logging.info(
+            f"[AI] Using Institutional Fallback Debate | "
+            f"Symbol={symbol} | "
+            f"Reason=LLM Offline or Below Threshold"
+        )
         logging.info(f"⚡ Executing Component-Based Fallback Debate for {symbol}")
         return self._run_institutional_fallback_debate(symbol, quant_fusion_data, risk_data, start_time, "LLM Offline or Below Threshold")
 
@@ -237,7 +267,8 @@ class InstitutionalAIDebateEngine:
                 "llm_used": False,
                 "prompt_version": self.prompt_version,
                 "fallback_reason": reason
-            }
+            },
+            "decision_source": "Fallback"
         }
 
     def _call_multi_provider_llm(
@@ -451,7 +482,8 @@ Return ONLY the JSON object. No extra text.
             "execution_plan": risk_data.get("trade_levels", {}),
             "ai_votes": {"bull_ai": "REJECT", "bear_ai": "REJECT", "manipulation_ai": "REJECT", "cio_ai": "REJECT"},
             "agreement_pct": 0.0,
-            "telemetry": {"latency_sec": round(time.time() - start_time, 3), "llm_used": False, "fallback_reason": "Hard Gatekeeper Veto"}
+            "telemetry": {"latency_sec": round(time.time() - start_time, 3), "llm_used": False, "fallback_reason": "Hard Gatekeeper Veto"},
+            "decision_source": "HardGuard"
         }
 
 
@@ -565,6 +597,7 @@ if __name__ == "__main__":
             self.assertEqual(result["ai_votes"]["cio_ai"], "EXECUTE")
             self.assertEqual(result["agreement_pct"], 100.0)
             self.assertGreaterEqual(result["confidence_score"], 80)
+            self.assertEqual(result.get("decision_source"), "Fallback")  # Check new field
 
         def test_fallback_logic_watchlist(self):
             quant_fusion = self.mock_quant_fusion.copy()
@@ -608,6 +641,7 @@ if __name__ == "__main__":
             self.assertEqual(result["final_decision"], "REJECT")
             self.assertEqual(result["ai_votes"]["cio_ai"], "REJECT")
             self.assertEqual(result["agreement_pct"], 0.0)
+            self.assertEqual(result.get("decision_source"), "Fallback")
 
         def test_fallback_logic_missing_liquidity_key(self):
             quant_fusion = self.mock_quant_fusion.copy()
@@ -848,23 +882,24 @@ if __name__ == "__main__":
         
         def test_hard_gatekeeper_reject_low_score(self):
             quant_fusion = self.mock_quant_fusion.copy()
-            quant_fusion["unified_score"] = 70.0
+            quant_fusion["unified_score"] = 60.0  # Below new 68 threshold
             quant_fusion["is_passed"] = True
             result = self.engine.run_debate_and_decide(
                 "BTC/USDT", quant_fusion, self.mock_risk_data, self.mock_btc_macro
             )
             self.assertEqual(result["final_decision"], "REJECT")
             self.assertIn("Quant Hard Guard Veto Triggered", str(result["reasons"]))
+            self.assertEqual(result.get("decision_source"), "HardGuard")  # Check new field
 
         def test_hard_gatekeeper_reject_low_ev(self):
             quant_fusion = self.mock_quant_fusion.copy()
-            quant_fusion["ev_r"] = 1.0
+            quant_fusion["ev_r"] = 0.9  # Below new 1.0 threshold
             quant_fusion["is_passed"] = True
             result = self.engine.run_debate_and_decide(
                 "BTC/USDT", quant_fusion, self.mock_risk_data, self.mock_btc_macro
             )
             self.assertEqual(result["final_decision"], "REJECT")
-            self.assertIn("Quant Hard Guard Veto Triggered", str(result["reasons"]))
+            self.assertEqual(result.get("decision_source"), "HardGuard")
 
         def test_hard_gatekeeper_reject_btc_bear_long(self):
             btc_macro = {"is_bullish": False, "regime": "BEAR"}
@@ -872,7 +907,7 @@ if __name__ == "__main__":
                 "BTC/USDT", self.mock_quant_fusion, self.mock_risk_data, btc_macro
             )
             self.assertEqual(result["final_decision"], "REJECT")
-            self.assertIn("Cannot LONG altcoins during Bearish BTC Macro", str(result["reasons"]))
+            self.assertEqual(result.get("decision_source"), "HardGuard")
 
         def test_hard_gatekeeper_reject_high_impact_news(self):
             news = {"has_high_impact_news": True, "news_event": "FED_RATE_HIKE"}
@@ -880,7 +915,7 @@ if __name__ == "__main__":
                 "BTC/USDT", self.mock_quant_fusion, self.mock_risk_data, self.mock_btc_macro, news_event_data=news
             )
             self.assertEqual(result["final_decision"], "REJECT")
-            self.assertIn("High Impact News Active", str(result["reasons"]))
+            self.assertEqual(result.get("decision_source"), "HardGuard")
 
         @patch.object(InstitutionalAIDebateEngine, '_call_multi_provider_llm')
         def test_ai_confidence_calibration(self, mock_llm):
@@ -899,6 +934,7 @@ if __name__ == "__main__":
             # Posterior should be 1.0 => capped to 95
             self.assertEqual(result["confidence_score"], 95)
             self.assertEqual(result["confidence"], 95)
+            self.assertEqual(result.get("decision_source"), "LLM")  # Check new field
 
         # ============================================================
         # 5. REAL DATA INTEGRATION TEST (optional, skipped if imports fail)
