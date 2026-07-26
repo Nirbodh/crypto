@@ -359,7 +359,10 @@ class QuantTradingOrchestrator:
             symbol = asset["symbol"]
             fusion_res = asset["fusion_res"]
             unified_score = asset.get("unified_score", 0.0)
-
+            logging.info(
+                f"🔍 Checking {symbol} | Score={unified_score:.1f} | Passed={fusion_res.get('is_passed')}"
+            )
+            
             # ---- FIX 4: Use unified_score for gatekeeping ----
             if unified_score < threshold:
                 logging.debug(f"⛔ Gatekeeper rejected {symbol} (Score: {unified_score:.1f} < {threshold:.1f})")
