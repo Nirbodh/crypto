@@ -41,8 +41,8 @@ class InstitutionalAIDebateEngine:
     def __init__(
         self, 
         gemini_key: Optional[str] = None,
-        openai_key: Optional[str] = None,
-        deepseek_key: Optional[str] = None,
+        #openai_key: Optional[str] = None,
+        #deepseek_key: Optional[str] = None,
         model_name: Optional[str] = None,
         prompt_version: str = "v3",
         config: Optional[Dict[str, Any]] = None
@@ -51,12 +51,12 @@ class InstitutionalAIDebateEngine:
         
         # API Keys & Models for Multi-Provider Failover
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY", "")
-        self.openai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
-        self.deepseek_key = deepseek_key or os.getenv("DEEPSEEK_API_KEY", "")
+        #self.openai_key = openai_key or os.getenv("OPENAI_API_KEY", "")
+        #self.deepseek_key = deepseek_key or os.getenv("DEEPSEEK_API_KEY", "")
 
         self.gemini_model = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        self.deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        #self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        #self.deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         
         self.prompt_version = prompt_version
         
