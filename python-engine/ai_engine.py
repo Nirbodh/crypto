@@ -43,24 +43,24 @@ class AIDebateEngine:
     def __init__(
         self,
         gemini_key: str = None,
-        openai_key: str = None,
-        deepseek_key: str = None,
+        # openai_key: str = None,          # COMMENTED OUT - Only Gemini active
+        # deepseek_key: str = None,        # COMMENTED OUT - Only Gemini active
         config: Optional[Dict[str, Any]] = None
     ):
         self._engine = InstitutionalAIDebateEngine(
             gemini_key=gemini_key,
-            openai_key=openai_key,
-            deepseek_key=deepseek_key,
+            # openai_key=openai_key,       # COMMENTED OUT - Only Gemini active
+            # deepseek_key=deepseek_key,   # COMMENTED OUT - Only Gemini active
             prompt_version=self.PROMPT_VERSION,
             config=config or {}
         )
         # Legacy attributes (kept for compatibility)
         self.gemini_key = gemini_key or os.getenv("GEMINI_API_KEY")
-        self.openai_key = openai_key or os.getenv("OPENAI_API_KEY")
-        self.deepseek_key = deepseek_key or os.getenv("DEEPSEEK_API_KEY")
+        # self.openai_key = openai_key or os.getenv("OPENAI_API_KEY")   # COMMENTED OUT
+        # self.deepseek_key = deepseek_key or os.getenv("DEEPSEEK_API_KEY") # COMMENTED OUT
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        self.deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        # self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")   # COMMENTED OUT
+        # self.deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat") # COMMENTED OUT
 
         # Provider metrics store
         self._provider_metrics = {}
@@ -454,13 +454,13 @@ class AIDebateEngine:
         logging.warning("_call_gemini is deprecated. Use run_debate.")
         return None
 
-    def _call_openai(self, system_prompt: str, user_prompt: str) -> str:
-        logging.warning("_call_openai is deprecated. Use run_debate.")
-        return None
+    # def _call_openai(self, system_prompt: str, user_prompt: str) -> str:   # COMMENTED OUT
+    #     logging.warning("_call_openai is deprecated. Use run_debate.")
+    #     return None
 
-    def _call_deepseek(self, system_prompt: str, user_prompt: str) -> str:
-        logging.warning("_call_deepseek is deprecated. Use run_debate.")
-        return None
+    # def _call_deepseek(self, system_prompt: str, user_prompt: str) -> str: # COMMENTED OUT
+    #     logging.warning("_call_deepseek is deprecated. Use run_debate.")
+    #     return None
 
     def _parse_ai_response(self, text: str, symbol: str, default_score: int = 70) -> dict:
         logging.warning("_parse_ai_response is deprecated. Use run_debate.")
